@@ -2,7 +2,7 @@
 Project Ket Thuc Mon Hoc - Lap Trinh Mang
 
 # CARO LAN GAME  
-## Môn: Lập Trình Mạng – Python Socket Programming
+## Môn: Lập Trình Mạng 
 
 ### 1. Giới thiệu
 
@@ -132,24 +132,22 @@ python client_pygame.py --server 192.168.1.20 --port 5000 --name Player1
 
 7. Luồng hoạt động
 
-    Hai client kết nối tới server.
-
-    Server gán ký hiệu X và O cho người chơi.
-
-    Người chơi X đi trước, gửi tọa độ nước đi.
-
-    Server kiểm tra tính hợp lệ, cập nhật bàn cờ và gửi lại trạng thái cho cả hai bên.
-
-    Khi một người chơi có 5 quân liên tiếp, server xác định người thắng và thông báo kết quả.
+Hai client kết nối tới server.
+Server gán ký hiệu X và O cho người chơi.
+Người chơi X đi trước, gửi tọa độ nước đi.
+Server kiểm tra tính hợp lệ, cập nhật bàn cờ và gửi lại trạng thái cho cả hai bên.
+Khi một người chơi có 5 quân liên tiếp, server xác định người thắng và thông báo kết quả.
 
 8. Mở rộng đề xuất
 Tính năng	Mô tả
+
 Nhiều phòng chơi:	Quản lý nhiều trận Caro cùng lúc trên server
+
 Giao diện chat:	Cho phép trò chuyện trực tiếp trong cửa sổ PyGame
+
 Giới hạn thời gian:	Thêm bộ đếm thời gian cho mỗi lượt đi
+
 Ghi log ván chơi:	Lưu lịch sử nước đi vào tệp JSON hoặc Excel
+
 Kết nối internet:	Mở cổng và chơi qua IP công cộng hoặc VPS
 
-    Công cụ: Visual Studio Code / PyCharm
-
-    Năm học: 2025
