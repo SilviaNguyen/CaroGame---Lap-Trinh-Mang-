@@ -47,19 +47,29 @@ caro-net/
 #### 4.1. Mô hình tổng quát
 
 +---------------------+ TCP Socket +----------------------+
+
 | Client A | <--------------------> | Server |
+
 | (PyGame Interface) | | (Board + Threading) |
+
 +---------------------+ +----------------------+
+
 | |
 | |
 | TCP Socket |
 | |
 v v
+
 +---------------------+ +----------------------+
+
 | Client B | | Board Logic (X/O) |
+
 | (PyGame Interface) | | - Check win |
+
 +---------------------+ | - Validate move |
+
 +----------------------+
+
 
 
 #### 4.2. Thành phần chính
@@ -108,35 +118,38 @@ v v
 
 #### 6.1. Cài đặt môi trường
 
-python -m venv .venv
-source .venv/Scripts/activate        # Windows
+    python -m venv .venv
+    source .venv/Scripts/activate        # Windows
 # hoặc
-source .venv/bin/activate            # Linux/macOS
+    source .venv/bin/activate            # Linux/macOS
 
-pip install -r requirements.txt
+    pip install -r requirements.txt
 
 6.2. Chạy Server
 
 python server.py --host 0.0.0.0 --port 5000 --size 15 --win 5
 
 6.3. Chạy Client
+Trên cùng một máy:
 
-    Trên cùng một máy:
+    python client_pygame.py --server 127.0.0.1 --port 5000 --name Alice
+    python client_pygame.py --server 127.0.0.1 --port 5000 --name Bob
 
-python client_pygame.py --server 127.0.0.1 --port 5000 --name Alice
-python client_pygame.py --server 127.0.0.1 --port 5000 --name Bob
+Qua mạng LAN (thay 127.0.0.1 bằng địa chỉ IP của máy chạy server):
 
-    Qua mạng LAN (thay 127.0.0.1 bằng địa chỉ IP của máy chạy server):
-
-python client_pygame.py --server 192.168.1.20 --port 5000 --name Player1
+    python client_pygame.py --server 192.168.1.20 --port 5000 --name Player1
 
 7. Luồng hoạt động
 
 Hai client kết nối tới server.
 Server gán ký hiệu X và O cho người chơi.
+
 Người chơi X đi trước, gửi tọa độ nước đi.
+
 Server kiểm tra tính hợp lệ, cập nhật bàn cờ và gửi lại trạng thái cho cả hai bên.
+
 Khi một người chơi có 5 quân liên tiếp, server xác định người thắng và thông báo kết quả.
+
 
 8. Mở rộng đề xuất
 Tính năng	Mô tả
