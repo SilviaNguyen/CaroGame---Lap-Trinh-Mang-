@@ -1,14 +1,19 @@
 import socket
 import threading
+from board import Board
 
 host = '0.0.0.0'
 port = 5000
 
+board = Board(size=15, win_len=5)
+players = []
+symbols = ["X", "O"]
+lock = threading.Lock()
+
 def handler_client(client_socket, addr):
     print(f"Kết nối từ {addr}")
     client_socket.sendall("Chào mừng bạn Caro Game!\n".encode('utf-8'))
-    client_socket.close()
-    
+        
     try:
         while True:
             data = client_socket.recv(1024)
@@ -35,3 +40,4 @@ while True:
     thread = threading.Thread(target=handler_client, args=(client_socket, addr))
     thread.start()
     client_socket.sendall("Chào mừng bạn Caro Game!\n")    
+
