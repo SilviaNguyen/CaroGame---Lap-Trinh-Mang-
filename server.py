@@ -10,13 +10,63 @@ players = []
 symbols = ["X", "O"]
 lock = threading.Lock()
 
-def handler_client(client_socket, addr):
+def send(client, data):
+    client.sendall((json.dumps(data) + "\n").encode("utf-8"))
+
+def broadcast(data):
+    for p in players:
+        try:
+            send(p["conn"], data)
+        except:
+            pass
+
+def hadle_move(player, x, y):
+    with lock:
+        symbol = player["symbol"]
+        valid = board.place(x, y, symbol)
+        if not valid:
+            send(player["conn"], {"type": "error", "message": "Nước đi không hợp lệ!"})
+            return
+        data = {
+            "type": "update",
+            "board": board.to_list(),
+            "turn": board.turn,
+            "winner": board.winner,
+            "draw": board.is_draw()
+        }
+        broadcast(data)
+        
+        if board.winner:
+            broadcast({"type": "end", "message": f"Người chơi {board.winner} đã thắng!"})
+        elif board.is_draw():
+            broadcast({"type": "end", "message": "Ván đấu hòa!"})
+            
+def handler_client(conn, addr):
     print(f"Kết nối từ {addr}")
     client_socket.sendall("Chào mừng bạn Caro Game!\n".encode('utf-8'))
+    player = {"conn": conn, "addr": addr, "symbol": None}
+    with lock:
+        if len(players) >= 2:
+            send(conn, {"type": "info", "message": "Phòng đã đầy mất rồi!"})
+            conn.close()
+            return
+        player["symbol"] = symbols[len(players)]
+        players.append(player)
+        send(conn, {"type": "assign", "symbol": player["symbol"]})
+        print(f"Người chơi {addr} là '{player['symbol']}'")
         
+    if len(players) == 2:
+        broadcast({
+            "type": "start",
+            "message": "Trò chơi bắt đầu!",
+            "board": board.to_list(),
+            "turn": board.turn
+        })
+    
     try:
+        buffer = ""
         while True:
-            data = client_socket.recv(1024)
+            data = conn.recv(1024)
             if not data:
                 print(f"Đã ngắt kết nối!")
                 break
