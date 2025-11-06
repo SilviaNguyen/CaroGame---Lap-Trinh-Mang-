@@ -14,15 +14,17 @@ lock = threading.Lock()
 
     
 def send(client, data):
-    client.sendall((json.dumps(data) + "\n").encode("utf-8"))
+    payload = (json.dumps(data) + "\n").encode("utf-8")
     client.sendall(payload)
     
 def broadcast(data):
     for p in players:
-        try:
-            send(conn, data)
-        except:
-            pass
+        for p in players[:]:
+            conn = p.get("conn")
+            try:
+                send(conn, data)
+            except:
+                pass
 
 def handle_move(player, x, y):
     with lock:
@@ -61,7 +63,7 @@ def handler_client(conn, addr):
         try:
             send(conn, {"type": "assign", "symbol": player["symbol"]})
         except Exception as e:
-            print(f"[!] Không gửi được assign cho {add}: {e}")
+            print(f"[!] Không gửi được assign cho {addr}: {e}")
         print(f"Người chơi {addr} là '{player['symbol']}'")
 
     with lock:     
