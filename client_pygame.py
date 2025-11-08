@@ -1,7 +1,11 @@
 import sys, os, socket, threading
 from typing import Optional, Tuple
 import pygame
+ integration
+import json
+
 from board import Board  
+ main
 
 # ===================== Font helper (Unicode VN) =====================
 def _resolve_vn_font() -> Optional[str]:
@@ -197,6 +201,68 @@ class CaroApp:
 
     # --------- Network callback ----------
     def on_message(self, line: str):
+integration
+        try:
+            data=json.loads(line)
+        except json.JSONDecodeError:
+            print("Dữ liệu không có trong JSON", line)
+            return
+        msg_type = data.get("type")
+        if msg_type == "assign":
+            self.my_symbol = data.get("symbol")
+            your_turn = data.get("your_turn",False)
+            if self.my_symbol:
+                if your_turn:
+                    self.status = f"Bạn cầm quân {self.my_symbol} và đi trước."
+                else:
+                    self.status = f"Bạn cầm quân {self.my_symbol}. Đang chờ đối thủ đi trước."
+            elif msg_type == "state":
+                # Cập nhật trạng thái bàn cờ từ server
+                grid = data.get("grid",[])
+                turn = data.get("turn")
+                winner = data.get("winner")
+                last_move = data.get("last")
+                # Cập nhật bàn cờ local theo grid nhận được
+                size =len(grid)
+                if size: 
+                    self.board.size = size
+                    self.board.grid = [row[:] for row in grid]
+                    self.board.turn = turn
+                    self.board.winner = winner
+                # Cập nhật thông báo trnajg thái
+                if winner:
+                    # có người thắng hoặc hòa
+                    if winner in ("X", "O"):
+                        self.status = f"Ván đấu kết thúc! {winner} thắng." 
+                    else: 
+                        self.status = "Ván đấu hòa!"
+                else: 
+                    #chưa có người thắng: thông báo lượt hiện tại
+                    if hasattr(self, "my_symbol") and self.my_symbol == turn:
+                        self.status = "Đến lược bạn đi "
+                    else: 
+                        self.status = "Đang chờ lượt đối thủ..."
+                    # Nếu có nước đi cuối cùng và không phải do mình, hiển thị tọa độ đó
+                    if last_move and last_move.get("player") and last_move.get("player") != self.my_symbol:
+                        lx, ly = last_move["x"], last_move["y"]
+                        self.status = f"Đối thủ đi ({lx},{ly})."+ self.status
+            elif msg_type == "error":
+                # Báo lỗi từ server
+                err = data.get("message", "Đã có lỗi xảy ra")
+                self.status = "Lỗi" + err
+            elif msg_type == "chat":
+                #Nhận tin nhắn chat
+                sender = data.get("from", "")
+                msg = data.get("message","")
+                # Hiển thị chat
+                if sender:
+                    self.status = f"[Chat] {sender}:{msg}"
+                else:
+                    self.status = f"[Chat] {msg}"
+            else:
+                # Các loại thông điệp khác (nếu có )
+                print("Thông điệp không xử lý:", data)
+
         parts = line.split()
         if not parts: return
         cmd = parts[0].upper()
@@ -219,6 +285,7 @@ class CaroApp:
                 self.status="Đối thủ yêu cầu Undo (board không hỗ trợ)."
         elif cmd in ("HELLO","WELCOME"):
             self.status="Server: "+" ".join(parts[1:])
+main
 
     # --------- Draw ----------
     def draw_bg(self):
@@ -320,6 +387,24 @@ class CaroApp:
     def on_click(self, pos):
         for b in self.buttons:
             if b.rect.collidepoint(pos):
+integration
+                if b.text=="New": self.board.reset(); self._send(json.dumps({"type":"reset"})); self.status="Bắt đầu ván mới."
+                elif b.text=="Undo":
+                    if self.board.undo(): self._send(json.dumps({"type":"undo"})); self.status="Đã Undo."
+                elif b.text=="Connect": self.try_connect_dialog()
+                return
+                    # Khi đang chơi online: chỉ cho click nếu tới lượt mình
+        if self.remote_enabled and hasattr(self, "my_symbol") and self.my_symbol:
+            if self.board.winner:
+                return
+            if self.board.turn != self.my_symbol:
+                return
+
+        g=self.grid_at(pos)
+        if g and self.board.place(*g):
+            self.status=f"Đánh ({g[0]},{g[1]}). Lượt: {self.board.turn}"
+            self._send(json.dumps({"type":"move","x":g[0],"y":g[1]}))
+
                 if b.text=="New":
                     self.board.reset(); self._send("RESET"); self.status="Bắt đầu ván mới."
                 elif b.text=="Undo":
@@ -336,6 +421,7 @@ class CaroApp:
             if self.board.place(g[0], g[1], self.board.turn):
                 self.status=f"Đánh ({g[0]},{g[1]}). Lượt: {self.board.turn}"
                 self._send(f"MOVE {g[0]} {g[1]}")
+main
 
     def _send(self, text: str):
         if self.remote_enabled:
@@ -344,10 +430,19 @@ class CaroApp:
     def try_connect_dialog(self):
         host="127.0.0.1"; port=5000
         try:
+ integration
+            self.net.connect(host,port)
+            self.remote_enabled=True
+            player_name = "player"
+            join_msg = {"type":"join","name": player_name}
+            self.net.send.line(json.dumps(join_msg))
+            self.status=f"Đã kết nối {host}:{port}. Đang chờ ghép phòng..."; 
+
             self.net.connect(host, port)
             self.remote_enabled=True
             self.status=f"Đã kết nối {host}:{port}"
             self._send("HELLO client")
+ main
         except Exception as e:
             self.remote_enabled=False
             self.status=f"Không thể kết nối: {e}"
