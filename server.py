@@ -59,7 +59,15 @@ class RoomState:
             for p in self.players:
                 self.send_assign(p)
             self.push_state()
-               
+            
+    def join(self, sock, name):
+        with self.lock:
+            if len(self.players) >= 2:
+                self._send_one({"sock":sock}, {"type":"error","message":"room full"})
+                return
+            self.players.append({"sock": sock, "name": name, "symbol": None})
+            self.assign_symbols_if_ready()
+
 def start_turn_timer(player):
     global turn_timer
     with lock:
@@ -182,33 +190,21 @@ def client_ping_loop(player):
                 print(f"[PING] {player['addr']} không phản hồi -> ngắt kết nối.")
                 safe_close(conn)
                 break
-        else:
-            player["last_pong"] = time.time()
-
-        send(conn, {"type": "ping"})
-        time.sleep(ping_interval)
-
+           
+            send(conn, {"type": "ping"})
+            time.sleep(ping_interval)
+        
+        except Exception as e:
+            print(f"[PING LOOP] Lỗi với {player['addr']}: {e}")
+            safe_close(conn)
+            break
                     
 def handle_client(conn, addr):
-    global players, is_running
+    global players, is_running, turn_timer
     
     print(f"Kết nối từ {addr}")
-    player = {"conn": conn, "addr": addr, "symbol": None}
+    player = {"conn": conn, "addr": addr, "symbol": None, "last_pong": time.time()}
     
-    with lock:
-        if len(players) >= 2:    
-            send(conn, {"type": "info", "message": "Phòng đã đầy mất rồi!"})
-            safe_close(conn)
-            return
-    
-        player["symbol"] = symbols[len(players)]
-        players.append(player)
-        send(conn, {"type": "assign", "symbol": player["symbol"]})
-        print(f"Người chơi {addr} là '{player['symbol']}'")
-            
-        if len(players) == 2:
-            broadcast({"type": "info", "message": "Cả hai đã vào phòng, hãy nhấn 'Ready' để bắt đầu!"})
-
     threading.Thread(target=client_ping_loop, args=(player,), daemon=True).start()
 
     buffer = ""
