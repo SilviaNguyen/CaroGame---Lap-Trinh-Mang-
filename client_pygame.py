@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
 import sys, os, socket, threading
-from dataclasses import dataclass
 from typing import Optional, Tuple, List
 import pygame
 import json
+import time
 
 # ===================== Font helper (Unicode VN) =====================
 def _resolve_vn_font() -> Optional[str]:
@@ -23,7 +22,6 @@ def _resolve_vn_font() -> Optional[str]:
     return None
 
 # ===================== Game logic (5-in-a-row) =====================
-@dataclass
 class Move:
     x: int
     y: int
@@ -185,7 +183,7 @@ class CaroApp:
         pygame.init()
         self.board = Board(size, win_len)
         self.cell  = 40
-        self.margin= 40
+        self.margin = 40
         self.sidebar_w = 320
         self.toolbar_h = 96
 
@@ -201,8 +199,12 @@ class CaroApp:
             self.font = pygame.font.Font(fp, 20)
             self.small= pygame.font.Font(fp, 16)
             self.big  = pygame.font.Font(fp, 34)
+            self.timer_font = pygame.font.Font(fp, 28) # Font cho timer
         else:
-            self.font=pygame.font.SysFont(None,20); self.small=pygame.font.SysFont(None,16); self.big=pygame.font.SysFont(None,34)
+            self.font=pygame.font.SysFont(None,20)
+            self.small=pygame.font.SysFont(None,16)
+            self.big=pygame.font.SysFont(None,34)
+            self.timer_font = pygame.font.SysFont(None, 32)
 
         tb_y = 20 + board_h + (self.toolbar_h-56)//2
         self.buttons=[
@@ -211,20 +213,30 @@ class CaroApp:
             Button(pygame.Rect(self.margin+280, tb_y, 140, 56), "Connect"),
         ]
 
-        self.status="Sẵn sàng (Local 2 người)."
-        self.net=NetClient(); self.net.on_message=self.on_message; self.remote_enabled=False
+        self.status = "Sẵn sàng (Local 2 người)."
+        self.net = NetClient()
+        self.net.on_message = self.on_message
+        self.remote_enabled = False
 
         self.board_card = pygame.Rect(20, 20, board_w, board_h)
         self.sidebar    = pygame.Rect(40 + board_w, 20, self.sidebar_w, board_h)
         self.toolbar    = pygame.Rect(20, 20+board_h, width-40, self.toolbar_h)
+        self.my_symbol = None
+
+        #Xóa timer "giả"
+        self.timer_duration = 0  
+        self.last_move_ts = 0    
+        self.time_remaining = 0  
 
     # --------- Network callback ----------
     def on_message(self, line: str):
         try:
             data=json.loads(line)
+
         except json.JSONDecodeError:
             print("Dữ liệu không có trong JSON", line)
             return
+        
         msg_type = data.get("type")
         if msg_type == "assign":
             self.my_symbol = data.get("symbol")
@@ -240,45 +252,53 @@ class CaroApp:
                 turn = data.get("turn")
                 winner = data.get("winner")
                 last_move = data.get("last")
-                # Cập nhật bàn cờ local theo grid nhận được
-                size =len(grid)
-                if size: 
-                    self.board.size = size
+
+                # Lấy thông tin timer "thật" từ server
+                self.timer_duration = data.get("timer_duration", 0)
+                self.last_move_ts = data.get("last_move_ts", 0)
+
+                
+                if grid and isinstance(grid, list) and len(grid) > 0:
+                    self.board.size = len(grid)
                     self.board.grid = [row[:] for row in grid]
                     self.board.turn = turn
                     self.board.winner = winner
-                # Cập nhật thông báo trnajg thái
+
+                # Cập nhật thông báo trạng thái
                 if winner:
-                    # có người thắng hoặc hòa
+                    # Có người thắng hoặc hòa
                     if winner in ("X", "O"):
                         self.status = f"Ván đấu kết thúc! {winner} thắng." 
                     else: 
                         self.status = "Ván đấu hòa!"
+                    self.time_remaining = 0 # Dừng timer khi có kết quả 
                 else: 
-                    #chưa có người thắng: thông báo lượt hiện tại
-                    if hasattr(self, "my_symbol") and self.my_symbol == turn:
+                    # Sửa: Xóa logic tự reset timer
+                    if self.my_symbol and self.my_symbol == turn:
                         self.status = "Đến lược bạn đi "
                     else: 
                         self.status = "Đang chờ lượt đối thủ..."
                     # Nếu có nước đi cuối cùng và không phải do mình, hiển thị tọa độ đó
                     if last_move and last_move.get("player") and last_move.get("player") != self.my_symbol:
                         lx, ly = last_move["x"], last_move["y"]
-                        self.status = f"Đối thủ đi ({lx},{ly})."+ self.status
+                        self.status = f"Đối thủ đi ({lx},{ly}).+ {self.status}"
+
             elif msg_type == "error":
                 # Báo lỗi từ server
                 err = data.get("message", "Đã có lỗi xảy ra")
                 self.status = "Lỗi" + err
+
             elif msg_type == "chat":
                 #Nhận tin nhắn chat
                 sender = data.get("from", "")
                 msg = data.get("message","")
+
                 # Hiển thị chat
                 if sender:
                     self.status = f"[Chat] {sender}:{msg}"
                 else:
                     self.status = f"[Chat] {msg}"
             else:
-                # Các loại thông điệp khác (nếu có )
                 print("Thông điệp không xử lý:", data)
 
     # --------- Draw ----------
@@ -375,22 +395,31 @@ class CaroApp:
     def on_click(self, pos):
         for b in self.buttons:
             if b.rect.collidepoint(pos):
-                if b.text=="New": self.board.reset(); self._send(json.dumps({"type":"reset"})); self.status="Bắt đầu ván mới."
+                if b.text=="New": 
+                    self.board.reset() 
+                    self._send(json.dumps({"type":"reset"}))
+                    self.status="Bắt đầu ván mới."
                 elif b.text=="Undo":
                     if self.board.undo(): self._send(json.dumps({"type":"undo"})); self.status="Đã Undo."
-                elif b.text=="Connect": self.try_connect_dialog()
+                elif b.text=="Connect": 
+                    self.try_connect_dialog()
                 return
-                    # Khi đang chơi online: chỉ cho click nếu tới lượt mình
-        if self.remote_enabled and hasattr(self, "my_symbol") and self.my_symbol:
+        
+        if self.remote_enabled and self.my_symbol:
             if self.board.winner:
+                self.status = "Ván đấu đã kết thúc. Bấm 'New' để chơi lại."
                 return
             if self.board.turn != self.my_symbol:
+                self.status = "Chưa đến lượt của bạn!"
                 return
+        elif not self.remote_enabled and self.board.winner:
+            self.status = "Ván đấu đã kết thúc. Bấm 'New' để chơi lại."
+            return
 
         g=self.grid_at(pos)
         if g and self.board.place(*g):
             self.status=f"Đánh ({g[0]},{g[1]}). Lượt: {self.board.turn}"
-            self._send(json.dumps({"type":"move","x":g[0],"y":g[1]}))
+            self._send(json.dumps({"type": "move", "x": g[0], "y": g[1]}))
 
     def _send(self, text):
         if self.remote_enabled: self.net.send_line(text)
@@ -401,8 +430,8 @@ class CaroApp:
             self.net.connect(host,port)
             self.remote_enabled=True
             player_name = "player"
-            join_msg = {"type":"join","name": player_name}
-            self.net.send.line(json.dumps(join_msg))
+            join_msg = {"type":"join","name": player_name, "room": "default"}
+            self.net.send_line(json.dumps(join_msg))
             self.status=f"Đã kết nối {host}:{port}. Đang chờ ghép phòng..."; 
         except Exception as e:
             self.remote_enabled=False; self.status=f"Không thể kết nối: {e}"
@@ -411,17 +440,40 @@ class CaroApp:
     def run(self):
         clock=pygame.time.Clock()
         while True:
+
+            # ===== Sửa: Tính toán timer "thật" =====
+            if (self.remote_enabled and 
+                self.timer_duration > 0 and 
+                self.last_move_ts > 0 and 
+                not self.board.winner):
+                
+                # Tính toán dựa trên thời gian hiện tại và timestamp từ server
+                elapsed = time.time() - self.last_move_ts
+                self.time_remaining = max(0, self.timer_duration - elapsed)
+            else:
+                self.time_remaining = 0 # Không có timer
+
+            # Xử lý input    
             for ev in pygame.event.get():
-                if ev.type==pygame.QUIT:
-                    self.net.close(); pygame.quit(); sys.exit(0)
-                elif ev.type==pygame.MOUSEBUTTONDOWN and ev.button==1:
+                if ev.type == pygame.QUIT:
+                    self.net.close()
+                    pygame.quit()
+                    sys.exit(0)
+                elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                     self.on_click(ev.pos)
-                elif ev.type==pygame.KEYDOWN:
-                    if ev.key==pygame.K_n: self.board.reset(); self._send("RESET")
-                    elif ev.key==pygame.K_u:
-                        if self.board.undo(): self._send("UNDO")
-                    elif ev.key==pygame.K_c: self.try_connect_dialog()
-            self.draw_all(); clock.tick(60)
+                elif ev.type == pygame.KEYDOWN:
+                    if ev.key == pygame.K_n: 
+                        self.board.reset()
+                        self._send(json.dumps({"type": "reset"}))
+                        self.status = "Bắt đầu ván mới."
+                    elif ev.key == pygame.K_u:
+                        if self.board.undo(): 
+                            self._send("UNDO")
+                    elif ev.key == pygame.K_c: 
+                        self.try_connect_dialog()
+
+            self.draw_all() 
+            clock.tick(60)
 
 if __name__ == "__main__":
     app = CaroApp(size=15, win_len=5)
