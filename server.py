@@ -1,56 +1,80 @@
-import json
+import json, argparse
 import socket
 import threading
 from board import Board
-import time
+import time, datetime
 
-host = '0.0.0.0'
-port = 5000
+def parse_args():
+    p = argparse.ArgumentParser(description="Caro Game Server")
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--port", type=int, default=5000)
+    p.add_argument("--size", type=int, default=15)
+    p.add_argument("--win", type=int, default=5)
+    p.add_argument("--logdir", default="", help="Thư mục ghi log; rỗng =off")
+    p.add_argument("--enable-chat", action="store_true")
+    p.add_argument("--turn-timer", type=int, default=30, help="Thời gian tối đa mỗi lượt (giây); 0 = off. VD: 30")
+    return p.parse_args()
 
-board = Board(size=15, win_len=5)
-players = []
-ready_players = set()
-symbols = ["X", "O"]
+args = parse_args()
 
-is_running = False
-is_server_running = False
-server_socket = None
-lock = threading.RLock()
+ROOM = None
+conn_info = {} 
+class RoomState:
+    def __init__(self, room_id: str):
+        self.room_id = room_id
+        self.board = Board(size=args.size, win_len=args.win)
+        self.players = []
+        self.turn = "X"
+        self.winner = None
+        self.lock = threading.Lock()
+        self.last_move_ts = time.time()
+        self.timer_duration = args.turn_timer
 
-turn_time = 30
-turn_timer = None
-ping_interval = 10
-
-def safe_close(conn):
-    try:
-        conn.close()
-    except:
-        pass
-       
-def send(client, data): 
-    payload = (json.dumps(data) + "\n").encode("utf-8")
-    try:
-        client.sendall(payload)
-    except:
-        safe_close(client)
-        
-def broadcast(data):
-    with lock:
-        for p in players[:]:
-            conn = p.get("conn")
+    def broadcast(self, obj):
+        data = (json.dumps(obj) + "\n").encode("utf-8")
+        for p in list(self.players):
             try:
-                send(conn, data)
-            except Exception as e:
-                print(f"[!] Lỗi gửi tới {p.get('addr')}: {e}. Xóa client này.")
-                safe_close(conn)
-                players.remove(p) 
+                p["sock"].sendall(data)
+            except Exception:
+                pass
 
+    def _send_one(self, p, obj):
+        try:
+            data = (json.dumps(obj) + "\n").encode("utf-8")
+            p["sock"].sendall(data)
+        except Exception:
+            pass
+    def send_assign(self, p):
+        msg = {"type": "assign", "symbol": p["symbol"], "your_turn": (p["symbol"] == self.turn)}
+        self._send_one(p, msg)
+
+    def assign_symbols_if_ready(self):
+        if len(self.players) == 2:
+            self.players[0]["symbol"] = "X"
+            self.players[1]["symbol"] = "O"
+            self.board.reset()
+            self.turn = self.board.turn
+            self.winner = None
+            self.last_move_ts = time.time()
+            for p in self.players:
+                self.send_assign(p)
+            self.push_state()
+               
 def start_turn_timer(player):
     global turn_timer
-    if turn_timer:
-        turn_timer.cancel()
+    with lock:
+        if turn_timer and turn_timer.is_alive():
+            turn_timer.cancel()
+            turn_timer = None
+
     turn_timer = threading.Timer(turn_time, handle_timeout, [player])
+    turn_timer.daemon = True
     turn_timer.start()
+    try:
+        send(player["conn"], {"type": "timer_start", "time": turn_time})
+        print(f"[TIMER] Bắt đầu lượt của {player['symbol']} ({turn_time}s).")
+    except Exception as e:
+        print(f"[TIMER] Lỗi gửi timer_start tới {player['addr']}: {e}")
 
 def handle_timeout(player):
     if not is_running:
