@@ -9,7 +9,7 @@ class Board:
         self.grid: List[List[str]] = [["" for _ in range(size)] for _ in range(size)]
         self.moves = 0
         self.winner: Optional[str] = None
-        self.turn: str = "X"  # X đi trước
+        self.turn: str = "X" 
 
     def in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.size and 0 <= y < self.size
@@ -69,6 +69,12 @@ class Board:
         b = cls(size=len(grid), win_len=win_len)
         b.grid = grid
         b.turn = turn
-        # Recompute moves quickly
         b.moves = sum(1 for row in grid for c in row if c)
         return b
+
+    def reset(self):
+        self.grid = [["" for _ in range(self.size)] for _ in range(self.size)]
+        self.moves = 0
+        self.winner = None
+        self.turn = "X"
+
