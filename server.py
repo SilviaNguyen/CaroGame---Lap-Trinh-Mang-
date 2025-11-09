@@ -139,36 +139,24 @@ def end_game(winner = None, draw = False):
     with lock:
         board.reset() 
                  
-def handle_move(player, x, y): 
-    global turn_timer
-    
-    if not is_running:
-        send(player["conn"], {"type": "info", "message": "Game chưa bắt đầu lại. Hãy chờ người chơi khác nhấn 'Ready'."})
-        return
+def handle_move(self, x, y, player_symbol): 
+    with self.lock:
+        if self.winner:
+            return {"type": "error", "message": "Game finished"}
+        if player_symbol != self.turn:
+            return {"type": "error", "message": "Calm down. It is not your turn!"}
 
-    with lock:
-        if board.turn != player["symbol"]:
-            send(player["conn"], {"type": "error", "message": "Từ từ thôi, chưa đến lượt bạn!"})
-            return
-
-        valid = board.place(x, y, player["symbol"])
+        valid = self.board.place(x, y, player_symbol)
         if not valid:
-            send(player["conn"], {"type": "error", "message": "Nước đi không hợp lệ rồi!"})
-            return
+            return {"type": "error", "message": "Invalid move"}
 
-        if turn_timer:
-            turn_timer.cancel()
-            turn_timer = None
-        send(player["conn"], {"type": "timer_stop"})
-    if board.winner:
-        end_game(winner=board.winner)
-    elif board.is_draw():
-        end_game(draw = True)
-    else:
-        board.turn = "O" if board.turn == "X" else "X"
-        next_player = next((p for p in players if p["symbol"] == board.turn), None)
-        if next_player:
-            start_turn_timer(next_player) 
+        if self.board.check_win_from(x, y):
+            self.winner = player_symbol
+        elif self.board.is_draw():
+            self.winner = "draw"
+
+        self.push_state(last={"x": x, "y": y, "player": player_symbol})
+        return {"type": "valid"}
 
 def start_game():     
     board.reset()
