@@ -59,6 +59,19 @@ class RoomState:
             for p in self.players:
                 self.send_assign(p)
             self.push_state()
+     
+    def status(self, last=None):
+        grid = self.board.to_list() if hasattr(self.board, "to_list") else getattr(self.board, "grid", None)
+        msg = {
+            "type": "state",
+            "grid": grid,
+            "turn": self.turn,
+            "winner": self.winner,
+            "last": last,
+            "timer_duration": args.turn_timer,
+            "last_move_ts": self.last_move_ts
+        }
+        self.broadcast(msg)
             
     def join(self, sock, name):
         with self.lock:
@@ -146,16 +159,7 @@ def handle_move(player, x, y):
         if turn_timer:
             turn_timer.cancel()
             turn_timer = None
-   
-    data = {
-        "type": "update",
-        "board": board.to_list(),
-        "turn": board.turn,
-        "winner": board.winner,
-        "draw": board.is_draw()
-    }
-    broadcast(data)
-    
+        send(player["conn"], {"type": "timer_stop"})
     if board.winner:
         end_game(winner=board.winner)
     elif board.is_draw():
