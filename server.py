@@ -80,116 +80,26 @@ class RoomState:
                 return
             self.players.append({"sock": sock, "name": name, "symbol": None})
             self.assign_symbols_if_ready()
-
-def start_turn_timer(player):
-    global turn_timer
-    with lock:
-        if turn_timer and turn_timer.is_alive():
-            turn_timer.cancel()
-            turn_timer = None
-
-    turn_timer = threading.Timer(turn_time, handle_timeout, [player])
-    turn_timer.daemon = True
-    turn_timer.start()
-    try:
-        send(player["conn"], {"type": "timer_start", "time": turn_time})
-        print(f"[TIMER] Bắt đầu lượt của {player['symbol']} ({turn_time}s).")
-    except Exception as e:
-        print(f"[TIMER] Lỗi gửi timer_start tới {player['addr']}: {e}")
-
-def handle_timeout(player):
-    if not is_running:
-        return
-    
-    with lock:
-        loser = player["symbol"]
-        winner = "O" if loser == "X" else "X"
-        print(f"[TIMER] Người chơi {player['addr']} hết thời gian!")
-        print(f"[TIMER] Người chơi {player['addr']} ({loser}) hết thời gian! => {winner} thắng.")
-        broadcast({
-            "type": "timeout",
-            "message": f"Người chơi {loser} hết thời gian! {winner} thắng!"
-        })
-        end_game(winner=winner)
-
-def end_game(winner = None, draw = False):   
-    global turn_timer, is_running, ready_players
-    
-    with lock:
-        is_running = False
-        ready_players.clear()
-        if turn_timer:
-            turn_timer.cancel()
-            turn_timer = None
-    
-    if winner:
-        message = f"Người chơi {winner} đã thắng rồi!"
-    elif board.is_draw():
-        message = "Ván đấu hòa!"
-    else:
-        message = "Ván đấu kết thúc!"
-    
-    broadcast({
-        "type": "end",
-        "message": message
-    }) 
-    print(f"[GAME] {message}")
-
-    time.sleep(2)
-    with lock:
-        board.reset() 
                  
-def handle_move(self, x, y, player_symbol): 
-    with self.lock:
-        if self.winner:
-            return {"type": "error", "message": "Game finished"}
-        if player_symbol != self.turn:
-            return {"type": "error", "message": "Calm down. It is not your turn!"}
+    def handle_move(self, x, y, player_symbol): 
+        with self.lock:
+            if self.winner:
+                return {"type": "error", "message": "Game finished"}
+            if player_symbol != self.turn:
+                return {"type": "error", "message": "Calm down. It is not your turn!"}
 
-        valid = self.board.place(x, y, player_symbol)
-        if not valid:
-            return {"type": "error", "message": "Invalid move"}
+            valid = self.board.place(x, y, player_symbol)
+            if not valid:
+                return {"type": "error", "message": "Invalid move"}
 
-        if self.board.check_win_from(x, y):
-            self.winner = player_symbol
-        elif self.board.is_draw():
-            self.winner = "draw"
+            if self.board.check_win_from(x, y):
+                self.winner = player_symbol
+            elif self.board.is_draw():
+                self.winner = "draw"
 
-        self.push_state(last={"x": x, "y": y, "player": player_symbol})
-        return {"type": "valid"}
+            self.push_state(last={"x": x, "y": y, "player": player_symbol})
+            return {"type": "valid"}
 
-def start_game():     
-    board.reset()
-    board.turn = "X"
-    
-    broadcast({
-        "type": "start",
-        "message": "Trò chơi bắt đầu!",
-        "board": board.to_list(),
-        "turn": board.turn
-    })
-    print(f"Đã bắt đầu ván mới!")
-    first_player = next((p for p in players if p["symbol"] == board.turn), None)
-    if first_player:
-        start_turn_timer(first_player)
-    
-def client_ping_loop(player):
-    conn = player["conn"]
-    
-    while True:
-        if "last_pong" in player:
-            if time.time() - player["last_pong"] > ping_interval * 3:
-                print(f"[PING] {player['addr']} không phản hồi -> ngắt kết nối.")
-                safe_close(conn)
-                break
-           
-            send(conn, {"type": "ping"})
-            time.sleep(ping_interval)
-        
-        except Exception as e:
-            print(f"[PING LOOP] Lỗi với {player['addr']}: {e}")
-            safe_close(conn)
-            break
 def read_line_json(sock):
     buffer = ""
     while True:
@@ -212,7 +122,37 @@ def read_line_json(sock):
 
         except Exception:
             return None
+        
+# -----bên dưới là -----
+# ------ code cũ chưa xử lý --------
 
+def timer_loop():
+    if args.turn_timer <= 0:
+        print("[INFO] Turn timer is disabled.")
+        return
+    
+    print(f"[INFO] Turn timer enabled: {args.turn_timer} seconds per turn.")
+    
+    while True:
+        time.sleep(0.5)
+        now =  time.time()
+        with ROOM.lock:
+            if ROOM.winner or len(ROOM.players) < 2:
+                continue
+            if now - ROOM.last_move_ts >= ROOM.timer_duration:
+                loser = ROOM.turn
+                ROOM.winner = "O" if loser == "X" else "X"
+                ROOM.last_move_ts = now
+                print(f"[TIMER] Người chơi ({loser}) hết thời gian! => {ROOM.winner} thắng.")
+                ROOM.broadcast({
+                    "type": "timeout",
+                    "message": f"Hết giờ! Người chơi {loser} đã thua."
+                })
+                ROOM.status()
+
+LOG_DIR = pathlib.Path(args.logdir) if args.logdir else None
+if LOG_DIR:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
                    
 def handle_client(sock, addr):    
     print(f"{addr} connected")
