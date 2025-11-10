@@ -190,25 +190,38 @@ def client_ping_loop(player):
             print(f"[PING LOOP] Lỗi với {player['addr']}: {e}")
             safe_close(conn)
             break
-                    
-def handle_client(conn, addr):
-    global players, is_running, turn_timer
-    
-    print(f"Kết nối từ {addr}")
+def read_line_json(sock):
+    buffer = ""
+    while True:
+        try:
+            data = sock.recv(1024)
+            if not data:
+                return None
+
+            buffer += data.decode("utf-8", "ignore")
+
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    return json.loads(line)
+                except Exception:
+                    return {"type": "error", "message": "bad json"}
+
+        except Exception:
+            return None
+
+                   
+def handle_client(sock, addr):    
+    print(f"{addr} connected")
     player = {"conn": conn, "addr": addr, "symbol": None, "last_pong": time.time()}
     
     threading.Thread(target=client_ping_loop, args=(player,), daemon=True).start()
 
-    buffer = ""
-    try:
-        while True:
-            data = conn.recv(1024)
-            if not data:
-                break
-            buffer += data.decode("utf-8")
-            
-            while "\n" in buffer:
-                line, buffer = buffer.split("\n", 1)
+
+
                 try:
                     msg = json.loads(line)
                     
