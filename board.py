@@ -35,10 +35,11 @@ class Board:
         return True
 
     def check_win(self, x: int, y: int, symbol: str):
+        # Trả về (True, danh_sách_tọa_độ) nếu thắng; ngược lại (False, None)
         dirs = [(1, 0), (0, 1), (1, 1), (1, -1)]
         for dx, dy in dirs:
             coords = [(x, y)]
-            # + direction
+            # + hướng
             nx, ny = x, y
             while True:
                 nx += dx; ny += dy
@@ -46,7 +47,7 @@ class Board:
                     coords.append((nx, ny))
                 else:
                     break
-            # - direction
+            # - hướng
             nx, ny = x, y
             while True:
                 nx -= dx; ny -= dy
@@ -54,7 +55,6 @@ class Board:
                     coords.insert(0, (nx, ny))
                 else:
                     break
-
             if len(coords) >= self.win_len:
                 return True, coords
         return False, None

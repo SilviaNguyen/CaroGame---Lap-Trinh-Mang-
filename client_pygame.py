@@ -7,13 +7,14 @@ ROOM = "lobby1"
 if len(sys.argv)>=4: ROOM = sys.argv[3]
 
 SIZE=15; CELL=36; MARGIN=24
-W=MARGIN*2+CELL*SIZE; H=MARGIN*2+CELL*SIZE+52  # bar thấp hơn
+W=MARGIN*2+CELL*SIZE; H=MARGIN*2+CELL*SIZE+52  # bar thấp
 FPS=60
 
 pygame.init()
 screen=pygame.display.set_mode((W,H)); pygame.display.set_caption("Caro LAN Client")
 clock=pygame.time.Clock()
 
+# ---------- Font Unicode đẹp ----------
 def load_vn_font(size: int):
     for ttf in ["NotoSans-SemiBold.ttf","NotoSans-Regular.ttf","DejaVuSans.ttf","Roboto-Regular.ttf"]:
         p = os.path.join(os.path.dirname(__file__), ttf)
@@ -27,19 +28,19 @@ def load_vn_font(size: int):
 font = load_vn_font(20)
 small = load_vn_font(14)
 
-BG=(18,48,58)       
-PANEL=(22,62,72)     
-GRID=(70,130,140)    
-GRID5=(120,180,190)  
-BORDER=(36,96,106)   
+# ---------- Palette ----------
+BG=(18,48,58)
+PANEL=(22,62,72)
+GRID=(70,130,140)
+GRID5=(120,180,190)
+BORDER=(36,96,106)
 XCOL=(235,240,240)
 OCOL=(235,85,85)
 WINCOL=(255,210,64)
 
-BAR=(0,0,0)          
-TXT=(245,245,245)    
-MUTED=(165,170,180)  
-
+BAR=(0,0,0)      # status bar nền đen
+TXT=(245,245,245)
+MUTED=(165,170,180)
 BAR_H=52
 
 class Net:
@@ -119,12 +120,15 @@ st = State()
 net = Net(lambda m: st.apply(m))
 
 def draw_board(st):
+    # panel bo góc
     panel = pygame.Rect(MARGIN-8, MARGIN-8, CELL*SIZE+16, CELL*SIZE+16)
     pygame.draw.rect(screen, PANEL, panel, border_radius=14)
 
+    # khung bàn
     board_rect = pygame.Rect(MARGIN, MARGIN, CELL*SIZE, CELL*SIZE)
     pygame.draw.rect(screen, BORDER, board_rect, width=2, border_radius=10)
 
+    # lưới mịn; đậm mỗi 5 ô
     for i in range(1, SIZE):
         x = MARGIN + i*CELL
         y = MARGIN + i*CELL
@@ -132,6 +136,7 @@ def draw_board(st):
         pygame.draw.aaline(screen, col, (x,MARGIN), (x,MARGIN+CELL*SIZE))
         pygame.draw.aaline(screen, col, (MARGIN,y), (MARGIN+CELL*SIZE,y))
 
+    # quân cờ
     for y in range(SIZE):
         for x in range(SIZE):
             v=st.grid[y][x]
@@ -144,6 +149,7 @@ def draw_board(st):
             else:
                 r=CELL//2-6; pygame.draw.circle(screen,OCOL,(cx,cy),r,5)
 
+    # đường thắng
     if st.win_line and len(st.win_line) >= 2:
         (sx,sy) = st.win_line[0]
         (ex,ey) = st.win_line[-1]
@@ -156,12 +162,10 @@ def draw_board(st):
 def draw_status(st, net):
     bar=pygame.Rect(0, H-BAR_H, W, BAR_H)
     pygame.draw.rect(screen, BAR, bar)
-
     left=f"{'ON' if net.connected else 'OFF'} • Bạn: {st.me} • Lượt: {st.turn} • Phòng: {ROOM}"
     right=st.status
     screen.blit(small.render(left,True,TXT),(12, H-BAR_H+10))
     screen.blit(small.render(right,True,TXT),(12, H-BAR_H+28))
-
     tips="C: Kết nối/Ngắt   N: Ván mới   Esc: Thoát"
     w=small.size(tips)[0]
     screen.blit(small.render(tips,True,MUTED),(W-w-12, H-BAR_H+28))

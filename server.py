@@ -5,11 +5,14 @@ HOST = "127.0.0.1"
 PORT = 5000
 
 lock = threading.Lock()
-rooms = {}  # { room_name: { "board": Board(), "players": [...] } }
+# rooms: { room_name: { "board": Board(), "players": [ {"conn":..., "addr":..., "symbol": "X"|"O"} ] } }
+rooms = {}
 
 def _send(conn, obj):
-    try: conn.sendall((json.dumps(obj) + "\n").encode("utf-8"))
-    except: pass
+    try:
+        conn.sendall((json.dumps(obj) + "\n").encode("utf-8"))
+    except:
+        pass
 
 def _broadcast(room, obj):
     for p in room["players"]:
@@ -91,16 +94,106 @@ def _handle_client(conn, addr):
             try:
                 data = conn.recv(4096)
             except (ConnectionResetError, ConnectionAbortedError, OSError):
+                # client đóng đột ngột / mạng rớt
                 break
             if not data:
+                # client đóng bình thường
                 break
 
             buf += data.decode("utf-8")
             while "\n" in buf:
-                line, buf = buf.split("\n", 1)
+                line, buf = buf.split("\n",1)
                 line = line.strip()
-                if not line:
+                if not line: continue
+
+                msg = None
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    parts = line.split()
+                    if parts and parts[0].upper()=="RESET":
+                        if room_name and player:
+                            with lock:
+                                room = rooms.get(room_name)
+                                if room and len(room["players"]) == 2:
+                                    _start_game_locked(room)
+                        else:
+                            _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+                        continue
+                    if parts and parts[0].upper()=="MOVE" and len(parts)>=3:
+                        if room_name and player:
+                            room = rooms.get(room_name)
+                            if room:
+                                _handle_move(room, player, int(parts[1]), int(parts[2]))
+                        else:
+                            _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+                        continue
+                    _send(conn, {"type":"error","message":"Lệnh không hợp lệ"})
                     continue
+
+                if msg:
+                    t = msg.get("type","")
+                    if t == "join":
+                        requested = str(msg.get("room","default"))
+                        with lock:
+                            room = rooms.get(requested)
+                            if not room:
+                                room = {"board": Board(), "players": []}
+                                rooms[requested] = room
+
+                            if len(room["players"]) >= 2:
+                                _send(conn, {"type":"error","message":"Phòng đã đủ 2 người"})
+                                try: conn.close()
+                                except: pass
+                                print("[SERVER] Từ chối người thứ 3", addr, "-> room:", requested)
+                                return
+
+                            sym = _assign_symbol_locked(room)
+                            if sym is None:
+                                _send(conn, {"type":"error","message":"Phòng đã đủ người"})
+                                try: conn.close()
+                                except: pass
+                                return
+
+                            player = {"conn": conn, "addr": addr, "symbol": sym}
+                            room["players"].append(player)
+                            room_name = requested
+                            print(f"[SERVER] {addr} vào phòng '{room_name}' -> {sym}")
+                            _send(conn, {"type":"welcome","room":room_name,"symbol":sym})
+
+                            if len(room["players"]) == 2:
+                                _start_game_locked(room)
+                            else:
+                                _send(conn, {"type":"info","message":"Đang đợi người chơi thứ hai...", "win_line": None})
+
+                    elif t == "move":
+                        if room_name and player:
+                            room = rooms.get(room_name)
+                            if room: _handle_move(room, player, int(msg["x"]), int(msg["y"]))
+                        else:
+                            _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+
+                    elif t == "reset":
+                        if room_name and player:
+                            with lock:
+                                room = rooms.get(room_name)
+                                if room and len(room["players"]) == 2:
+                                    _start_game_locked(room)
+                        else:
+                            _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+
+                    elif t == "sync":
+                        if room_name:
+                            with lock:
+                                room = rooms.get(room_name)
+                                if room:
+                                    b = room["board"]
+                                    _send(conn, {"type":"update","board":b.to_list(),"turn":b.turn,
+                                                 "winner":b.winner,"draw":b.is_draw(),"win_line":b.win_line})
+                        else:
+                            _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+                    else:
+                        _send(conn, {"type":"error","message":"Lệnh không hợp lệ"})
     finally:
         try: conn.close()
         except: pass
@@ -111,6 +204,10 @@ def _handle_client(conn, addr):
 def main():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # best-effort keepalive
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except: pass
     s.bind((HOST, PORT))
     s.listen(64)
     print(f"[SERVER] Listening on {HOST}:{PORT}")
