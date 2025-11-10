@@ -72,3 +72,12 @@ class Board:
         # Recompute moves quickly
         b.moves = sum(1 for row in grid for c in row if c)
         return b
+
+    # === HÀM MỚI ĐƯỢC THÊM ĐỂ XỬ LÝ NÚT NEW===
+    def reset(self):
+        """Sửa lỗi crash khi bấm New Game."""
+        self.grid = [["" for _ in range(self.size)] for _ in range(self.size)]
+        self.moves = 0
+        self.winner = None
+        self.turn = "X"
+
