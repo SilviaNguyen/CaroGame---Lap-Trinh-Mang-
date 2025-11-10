@@ -155,11 +155,27 @@ if LOG_DIR:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
                    
 def handle_client(sock, addr):    
-    print(f"{addr} connected")
-    player = {"conn": conn, "addr": addr, "symbol": None, "last_pong": time.time()}
-    
-    threading.Thread(target=client_ping_loop, args=(player,), daemon=True).start()
+    print(f"{addr} connected")    
+    try:
+        while True:
+            data = read_line_json(sock)
+            if data is None:
+                break
+        
+            t = data.get("type")
+            if t == "join":
+                name = data.get("name", "player")
+                ROOM.join(sock, name)
+                conn_info[sock] = {"name": name}
+                continue
 
+            info = conn_info.get(sock)
+            if not info:
+                try:
+                    sock.sendall((json.dumps({"type": "error", "message": "join first"}) + "\n").encode("utf-8"))
+                except:
+                    pass
+                continue
 
 
                 try:
