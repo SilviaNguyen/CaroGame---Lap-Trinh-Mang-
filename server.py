@@ -1,318 +1,228 @@
-import socket, argparse, os, json, threading, time, pathlib
-from datetime import datetime
+import json, socket, threading
 from board import Board
 
-def parse_args():
-    p = argparse.ArgumentParser(description="Caro Game Server")
-    p.add_argument("--host", default="0.0.0.0")
-    p.add_argument("--port", type=int, default=5000)
-    p.add_argument("--size", type=int, default=15)
-    p.add_argument("--win", type=int, default=5)
-    p.add_argument("--logdir", default="", help="Thư mục ghi log; rỗng =off")
-    p.add_argument("--enable-chat", action="store_true")
-    p.add_argument("--enable-rooms", action="store_true")
-    # Sửa mô tả: 30 giây là một giá trị tốt để thử
-    p.add_argument("--turn-timer", type=int, default=30, help="Thời gian tối đa mỗi lượt (giây); 0 = off. VD: 30")
-    return p.parse_args()
+HOST = "127.0.0.1"
+PORT = 5000
 
-args = parse_args()
+lock = threading.Lock()
 
-class RoomState:
-    def __init__(self, room_id: str):
-        self.room_id = room_id
-        self.board = Board(size=args.size, win_len=args.win)
-        self.players = []  # [{sock, name, symbol}]
-        self.turn = "X"
-        self.winner = None
-        self.lock = threading.Lock()
-        self.last_move_ts = time.time()
-        self.timer_duration = args.turn_timer # Sẽ lấy giá trị default=30
-
-    def broadcast(self, obj):
-        data = (json.dumps(obj) + "\n").encode("utf-8")
-        for p in list(self.players):
-            try:
-                p["sock"].sendall(data)
-            except Exception:
-                pass
-
-    def _send_one(self, p, obj):
-        try:
-            data = (json.dumps(obj) + "\n").encode("utf-8")
-            p["sock"].sendall(data)
-        except Exception:
-            pass
-
-    def send_assign(self, p):
-        msg = {"type": "assign", "symbol": p["symbol"], "your_turn": (p["symbol"] == self.turn)}
-        self._send_one(p, msg)
-
-    def assign_symbols_if_ready(self):
-        if len(self.players) == 2:
-            self.players[0]["symbol"] = "X"
-            self.players[1]["symbol"] = "O"
-            # Reset bàn cờ khi đủ 2 người
-            self.board.reset()
-            self.turn = self.board.turn
-            self.winner = None
-            self.last_move_ts = time.time() # Reset timer
-            for p in self.players:
-                self.send_assign(p)
-            self.push_state()
-
-    # === HÀM PUSH_STATE ĐÃ SỬA ===
-    def push_state(self, last=None):
-        if hasattr(self.board, "to_list"):
-            grid = self.board.to_list()
-        else:
-            grid = getattr(self.board, "grid", None)
-
-        msg = {
-            "type": "state",
-            "grid": grid,
-            "turn": self.turn,
-            "winner": self.winner,
-            "last": last,
-            # Gửi thêm thông tin timer cho client
-            "timer_duration": args.turn_timer,
-            "last_move_ts": self.last_move_ts
-        }
-        self.broadcast(msg)
-
-    def join(self, sock, name):
-        with self.lock:
-            if len(self.players) >= 2:
-                self._send_one({"sock":sock}, {"type":"error","message":"room full"})
-                return
-            self.players.append({"sock": sock, "name": name, "symbol": None})
-            self.assign_symbols_if_ready()
-
-    def make_move(self, x, y, player_symbol):
-        with self.lock:
-            if self.winner:
-                return {"type": "error", "message": "game finished"}
-            if player_symbol != self.turn:
-                return {"type": "error", "message": "not your turn"}
-
-            ok = self.board.place(x, y, player_symbol)
-            if not ok:
-                return {"type": "error", "message": "invalid move"}
-
-            self.turn = self.board.turn
-            self.last_move_ts = time.time() # Reset timer sau nước đi
-
-            if self.board.check_win_from(x, y):
-                self.winner = player_symbol
-            elif self.board.is_draw(): # Sửa lỗi logic: check_win_from trả về bool
-                self.winner = "draw"
-
-            self.push_state(last={"x": x, "y": y, "player": player_symbol})
-            return {"type": "ok"}
-
-# registry
 rooms = {}
-conn_info = {}  # sock -> {"room":..., "name":...}
 
-def get_room(room_id: str) -> RoomState:
-    if not args.enable_rooms:
-        room_id = "default"
-    if room_id not in rooms:
-        rooms[room_id] = RoomState(room_id)
-    return rooms[room_id]
-
-def read_line_json(sock):
-    buf = b""
-    while True:
-        try:
-            ch = sock.recv(1)
-            if not ch:
-                return None # Kết nối đóng
-            buf += ch
-            if ch == b"\n":
-                s = buf.decode("utf-8", "ignore").strip()
-                if not s:
-                    continue # Bỏ qua dòng trống
-                try:
-                    return json.loads(s)
-                except Exception:
-                    return {"type": "error", "message": "bad json"}
-        except Exception:
-            return None # Lỗi kết nối
-
-# === HÀM TIMER_LOOP ĐÃ SỬA ===
-def timer_loop():
-    if args.turn_timer <= 0:
-        print("[INFO] Turn timer is disabled.")
-        return
-    
-    print(f"[INFO] Turn timer enabled: {args.turn_timer} seconds per turn.")
-    
-    while True:
-        time.sleep(0.5) # Kiểm tra mỗi nửa giây
-        now = time.time()
-        for r in list(rooms.values()):
-            with r.lock:
-                if r.winner or len(r.players) < 2:
-                    continue
-                
-                # timer_duration được lấy từ RoomState (đã gán default 30)
-                if now - r.last_move_ts >= r.timer_duration:
-                    # Hết giờ!
-                    loser = r.turn
-                    r.winner = "O" if loser == "X" else "X"
-                    r.last_move_ts = now # Reset timer để không bị lặp
-                    
-                    print(f"[TIMER] Phòng {r.room_id}: Người chơi {loser} hết giờ. {r.winner} thắng.")
-                    
-                    r.broadcast(
-                        {
-                            "type": "error",
-                            "message": f"Hết giờ! {loser} đã thua.",
-                        }
-                    )
-                    # Gửi state cuối cùng với người chiến thắng
-                    r.push_state()
-
-
-LOG_DIR = pathlib.Path(args.logdir) if args.logdir else None
-if LOG_DIR:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-def log_move(room: RoomState, x, y, player):
-    if not LOG_DIR:
-        return
-    rec = {
-        "ts": datetime.utcnow().isoformat() + "Z",
-        "room": room.room_id,
-        "player": player, "x": x, "y": y,
-        "turn_after": room.turn, "winner": room.winner
-    }
+def _send(conn, obj):
     try:
-        with (LOG_DIR / f"{datetime.utcnow().date()}.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec) + "\n")
-    except Exception as e:
-        print(f"[ERROR] Could not write log: {e}")
+        conn.sendall((json.dumps(obj) + "\n").encode("utf-8"))
+    except:
+        pass
 
-def handler_client(sock, addr):
-    print(f"[+] {addr} connected")
+def _broadcast(room, obj):
+    # room is the dict object rooms[room_name]
+    for p in room["players"]:
+        _send(p["conn"], obj)
+
+def _start_game_locked(room):
+    room["board"].reset()
+    room["board"].turn = "X"
+    _broadcast(room, {
+        "type": "start",
+        "message": "Trò chơi bắt đầu!",
+        "board": room["board"].to_list(),
+        "turn": room["board"].turn
+    })
+
+def _assign_symbol_locked(room):
+    used = {p["symbol"] for p in room["players"]}
+    if "X" not in used: return "X"
+    if "O" not in used: return "O"
+    return None
+
+def _handle_move(room, player, x, y):
+    with lock:
+        board = room["board"]
+
+        if player not in room["players"]:
+            _send(player["conn"], {"type":"error","message":"Bạn không còn trong phòng"})
+            return
+
+        if board.winner:
+            _send(player["conn"], {"type":"error","message":"Ván đã kết thúc"})
+            return
+
+        if board.turn != player["symbol"]:
+            _send(player["conn"], {"type":"error","message":"Chưa đến lượt bạn"})
+            return
+
+        ok = board.place(x, y, player["symbol"])
+        if not ok:
+            _send(player["conn"], {"type":"error","message":"Nước đi không hợp lệ"})
+            return
+
+        upd = {
+            "type": "update",
+            "board": board.to_list(),
+            "turn": board.turn,
+            "winner": board.winner,
+            "draw": board.is_draw()
+        }
+
+    _broadcast(room, upd)
+
+    if upd["winner"]:
+        _broadcast(room, {"type":"end","message":f"Người chơi {upd['winner']} thắng!"})
+    elif upd["draw"]:
+        _broadcast(room, {"type":"end","message":"Hòa!"})
+
+def _cleanup_player(room_name, player):
+    with lock:
+        room = rooms.get(room_name)
+        if not room:
+            return
+        # Gỡ player
+        if player in room["players"]:
+            room["players"].remove(player)
+        # Reset bàn khi có người rời
+        room["board"].reset()
+        _broadcast(room, {"type": "info", "message": f"{player['symbol']} đã rời phòng. Sẽ tạo ván mới khi đủ 2 người."})
+        # Xóa phòng nếu trống
+        if not room["players"]:
+            del rooms[room_name]
+
+def _handle_client(conn, addr):
+    print("[SERVER] Kết nối từ", addr)
+    buf = ""
+    room_name = None
+    player = None
+
     try:
         while True:
-            obj = read_line_json(sock)
-            if obj is None:
-                break # Client ngắt kết nối
-
-            t = obj.get("type")
-            
-            if t == "join":
-                room_id = obj.get("room", "default")
-                name = obj.get("name", "player")
-                r = get_room(room_id)
-                r.join(sock, name)
-                conn_info[sock] = {"room": room_id, "name": name}
-                continue
-
-            # Các lệnh sau cần phải join phòng trước
-            info = conn_info.get(sock)
-            if not info:
-                try: sock.sendall((json.dumps({"type":"error","message":"join first"}) + "\n").encode("utf-8"))
-                except: pass
-                continue
-            
-            r = get_room(info["room"])
-
-            if t == "move":
-                sym = None
-                for p in r.players:
-                    if p["sock"] is sock:
-                        sym = p.get("symbol")
-                        break
-                
-                if not sym:
-                    try: sock.sendall((json.dumps({"type":"error","message":"no symbol yet"}) + "\n").encode("utf-8"))
-                    except: pass
+            data = conn.recv(4096)
+            if not data:
+                break
+            buf += data.decode("utf-8")
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
+                line = line.strip()
+                if not line:
                     continue
-                
+
+                # Hỗ trợ cả JSON và lệnh text đơn giản
+                msg = None
                 try:
-                    x = int(obj.get("x", -1)); y = int(obj.get("y", -1))
-                except Exception:
-                    x, y = -1, -1 # Đánh dấu là invalid
-                
-                res = r.make_move(x, y, sym)
-                
-                if res and res.get("type") == "error":
-                    try: sock.sendall((json.dumps(res) + "\n").encode("utf-8"))
-                    except: pass
-                else:
-                    try: log_move(r, x, y, sym)
-                    except: pass
-                continue
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    parts = line.split()
+                    if parts:
+                        cmd = parts[0].upper()
+                        if cmd == "RESET":
+                            if room_name and player:
+                                with lock:
+                                    room = rooms.get(room_name)
+                                    if room and len(room["players"]) == 2:
+                                        _start_game_locked(room)
+                            else:
+                                _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+                            continue
+                        elif cmd == "MOVE" and len(parts) >= 3:
+                            if room_name and player:
+                                room = rooms.get(room_name)
+                                if room:
+                                    _handle_move(room, player, int(parts[1]), int(parts[2]))
+                            else:
+                                _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+                            continue
+                        else:
+                            _send(conn, {"type":"error","message":"Lệnh không hợp lệ"})
+                            continue
 
-            if t == "chat" and args.enable_chat:
-                r.broadcast({"type":"chat","from":info.get("name","?"),"message":obj.get("message","")})
-                continue
+                # Nếu là JSON
+                if msg:
+                    t = msg.get("type", "")
+                    if t == "join":
+                        # Nhận tham gia phòng
+                        requested = str(msg.get("room", "default"))
+                        with lock:
+                            room = rooms.get(requested)
+                            if not room:
+                                room = {"board": Board(), "players": []}
+                                rooms[requested] = room
 
-            if t == "reset":
-                with r.lock:
-                    r.board.reset()
-                    r.turn = "X"
-                    r.winner = None
-                    r.last_move_ts = time.time() # Reset timer
-                r.push_state()
-                continue
-            
-            # Lệnh không rõ
-            try: sock.sendall((json.dumps({"type":"error","message":"unknown type"}) + "\n").encode("utf-8"))
-            except: pass
+                            if len(room["players"]) >= 2:
+                                _send(conn, {"type":"error","message":"Phòng đã đủ 2 người"})
+                                try: conn.close()
+                                except: pass
+                                print("[SERVER] Từ chối người thứ 3", addr, "-> room:", requested)
+                                return
 
-    except Exception as e:
-        print(f"[!] {addr} error: {e}")
+                            sym = _assign_symbol_locked(room)
+                            if sym is None:
+                                _send(conn, {"type":"error","message":"Phòng đã đủ người"})
+                                try: conn.close()
+                                except: pass
+                                return
+
+                            player = {"conn": conn, "addr": addr, "symbol": sym}
+                            room["players"].append(player)
+                            room_name = requested
+
+                            print(f"[SERVER] {addr} vào phòng '{room_name}' -> {sym}")
+                            _send(conn, {"type":"welcome","room":room_name,"symbol":sym})
+
+                            if len(room["players"]) == 2:
+                                _start_game_locked(room)
+                            else:
+                                _send(conn, {"type":"info","message":"Đang đợi người chơi thứ hai..."})
+
+                    elif t == "move":
+                        if room_name and player:
+                            room = rooms.get(room_name)
+                            if room:
+                                _handle_move(room, player, int(msg["x"]), int(msg["y"]))
+                        else:
+                            _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+
+                    elif t == "reset":
+                        if room_name and player:
+                            with lock:
+                                room = rooms.get(room_name)
+                                if room and len(room["players"]) == 2:
+                                    _start_game_locked(room)
+                        else:
+                            _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+
+                    elif t == "sync":
+                        if room_name:
+                            with lock:
+                                room = rooms.get(room_name)
+                                if room:
+                                    b = room["board"]
+                                    _send(conn, {"type":"update","board":b.to_list(),"turn":b.turn,
+                                                 "winner":b.winner,"draw":b.is_draw()})
+                        else:
+                            _send(conn, {"type":"error","message":"Chưa tham gia phòng"})
+                    else:
+                        _send(conn, {"type":"error","message":"Lệnh không hợp lệ"})
     finally:
-        # Dọn dẹp
-        info = conn_info.pop(sock, None)
-        if info:
-            r = rooms.get(info["room"])
-            if r:
-                with r.lock:
-                    r.players = [p for p in r.players if p["sock"] is not sock]
-                    if len(r.players) < 2:
-                         r.winner = None # Reset game nếu 1 người thoát
-                         r.board.reset()
-                         r.push_state()
         try:
-            sock.close()
+            conn.close()
         except:
             pass
-        print(f"[x] {addr} disconnected")
+        if room_name and player:
+            _cleanup_player(room_name, player)
+        print("[SERVER] Ngắt kết nối", addr)
 
 def main():
-    host, port = args.host, args.port
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        srv.bind((host, port))
-    except Exception as e:
-        print(f"[FATAL] Could not bind to {host}:{port}. Error: {e}")
-        return
-        
-    srv.listen(5)
-    print(f"[OK] Server listening on {host}:{port}")
-
-    if args.turn_timer > 0:
-        threading.Thread(target=timer_loop, daemon=True).start()
-
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((HOST, PORT))
+    s.listen(64)
+    print(f"[SERVER] Listening on {HOST}:{PORT}")
     try:
         while True:
-            client, addr = srv.accept()
-            threading.Thread(target=handler_client, args=(client, addr), daemon=True).start()
+            c, a = s.accept()
+            threading.Thread(target=_handle_client, args=(c, a), daemon=True).start()
     except KeyboardInterrupt:
-        print("Shutting down server (KeyboardInterrupt).")
-    except Exception as e:
-        print(f"Server main loop error: {e}")
+        pass
     finally:
-        try:
-            srv.close()
-        except:
-            pass
+        s.close()
 
 if __name__ == "__main__":
     main()
