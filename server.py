@@ -227,36 +227,10 @@ def handle_client(sock, addr):
         except: pass
         print(f"[x] {addr} disconnected")
     
-def server_loop():
-    global is_server_running, server_socket
-    is_server_running = True
-    server_socket.listen(5)
-    print("Đang chờ kết nối...")
-    
-    try:
-        while is_server_running:
-            try:
-                server_socket.settimeout(1.0)
-                client, addr = server_socket.accept()
-                if not is_server_running:
-                    safe_close(client)
-                    break
-
-                thread = threading.Thread(target=handle_client, args=(client, addr), daemon=True)
-                thread.start()
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-    except KeyboardInterrupt:
-        print("\n Dừng bằng bàn phím.")
-    finally:
-        shutdown_server()
-        
 def shutdown_server():
     global is_server_running, players, server_socket, turn_timer
-    print("Đang tắt server...")
-    
+    print("[SERVER] Đã dừng hoàn toàn.")
+
     is_server_running = False
     
     with lock:
@@ -289,10 +263,20 @@ def main():
     except Exception as e:
         print(f"[!] Không thể gán {host}:{port}. Error: {e}")
         return
+    server.listen(5)
+    print(f"[OK] Server listening on {host}:{port}")
 
-    print("Khởi động server game Caro...")
-    server_thread = threading.Thread(target=server_loop)
-    server_thread.start()
+    if args.turn_timer > 0:
+        threading.Thread(target=timer_loop, daemon=True).start()
+
+    try:
+        while True:
+            client, addr = server.accept()
+            threading.Thread(target=handle_client, args=(client, addr), daemon=True).start()
+    except KeyboardInterrupt:
+        print("Shutting down server (KeyboardInterrupt).")
+    except Exception as e:
+        print(f"Server main loop error: {e}")
     
     try:
         while True:
