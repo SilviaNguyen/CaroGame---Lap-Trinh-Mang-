@@ -14,7 +14,9 @@ class Board:
     def in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.size and 0 <= y < self.size
 
-    def get(self, x: int, y: int) -> str:
+    def get(self, x: int, y: int) -> Optional[str]:
+        if not self.in_bounds(x,y):
+            return None
         return self.grid[y][x]
 
     def place(self, x: int, y: int, symbol: str) -> bool:
