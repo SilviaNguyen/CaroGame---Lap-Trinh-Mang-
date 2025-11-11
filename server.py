@@ -222,7 +222,7 @@ def handle_client(sock, addr):
                 if len(ROOM.players)<2:
                     ROOM.winner=None
                     ROOM.board.reset()
-                    ROOM.push_state()
+                    ROOM.status()
         try: sock.close()
         except: pass
         print(f"[x] {addr} disconnected")
