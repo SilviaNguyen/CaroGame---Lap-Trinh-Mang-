@@ -191,35 +191,41 @@ def handle_client(sock, addr):
                     pass
                 continue
 
-
+            if t == "move":
+                sym = next((p["symbol"] for p in ROOM.players if p["sock"]==sock), None)
+                if not sym:
+                    try: sock.sendall((json.dumps({"type":"error","message":"no symbol yet"})+"\n").encode("utf-8"))
+                    except: pass
+                    continue
+                
                 try:
-                    msg = json.loads(line)
-                    
-                    if msg["type"] == "pong":
-                        player["last_pong"] = time.time()
-                    elif msg["type"] == "move":
-                        x, y = msg["x"], msg["y"]
-                        handle_move(player, x, y)
-                    elif msg["type"] == "ready":
-                        with lock:
-                            ready_players.add(player["symbol"])
-                            print(f"[READY] {player['symbol']} đã sẵn sàng ({len(ready_players)}/2)")
-                            if len(ready_players) == 2 and not is_running:
-                                is_running = True
-                                start_game()
-                except Exception as e:
-                    send(conn, {"type": "error", "message": str(e)})
-    except (ConnectionResetError, OSError):  
-        print(f"[!] Client {addr} mất kết nối.")
+                    x = int(data.get("x",-1)); y = int(data.get("y",-1))
+                except:
+                    x, y = -1, -1
+                
+                res = ROOM.make_move(x,y,sym)
+                if res.get("type")=="error":
+                    try: sock.sendall((json.dumps(res)+"\n").encode("utf-8"))
+                    except: pass
+                else:
+                    try: log_move(ROOM, x, y, sym)
+                    except: pass
+                continue
+
+    except Exception as e:
+        print(f"[!] {addr} error: {e}")
     finally:
-        with lock:
-            if player in players:
-                players.remove(player)
-            broadcast({"type": "info", "message": f"Người chơi {player['symbol']} đã thoát!"})
-            if len(players) < 2:
-                board.reset()
-        safe_close(conn)
-        print(f"[SERVER] Đã đóng kết nối với {addr}. Còn lại: {len(players)}")
+        info = conn_info.pop(sock,None)
+        if info:
+            with ROOM.lock:
+                ROOM.players = [p for p in ROOM.players if p["sock"]!=sock]
+                if len(ROOM.players)<2:
+                    ROOM.winner=None
+                    ROOM.board.reset()
+                    ROOM.push_state()
+        try: sock.close()
+        except: pass
+        print(f"[x] {addr} disconnected")
     
 def server_loop():
     global is_server_running, server_socket
