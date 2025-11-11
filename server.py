@@ -226,30 +226,6 @@ def handle_client(sock, addr):
         try: sock.close()
         except: pass
         print(f"[x] {addr} disconnected")
-    
-def shutdown_server():
-    global is_server_running, players, server_socket, turn_timer
-    print("[SERVER] Đã dừng hoàn toàn.")
-
-    is_server_running = False
-    
-    with lock:
-        for p in players[:]:
-            conn = p["conn"]
-            send(conn, {"type": "info", "message": "Server đã tắt."})
-            safe_close(conn)
-        players.clear()
-        
-        if turn_timer:
-            turn_timer.cancel()
-            turn_timer = None
-            
-    if server_socket:
-        try:
-            server_socket.close()
-        except:
-            pass
-        server_socket = None
             
 def main():     
     global ROOM
@@ -277,12 +253,11 @@ def main():
         print("Shutting down server (KeyboardInterrupt).")
     except Exception as e:
         print(f"Server main loop error: {e}")
-    
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        shutdown_server()
+    finally:
+        try:
+            server.close()
+        except:
+            pass
 
 if __name__ == "__main__":
     main()
