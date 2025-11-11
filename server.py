@@ -1,4 +1,4 @@
-import json, argparse
+import json, argparse, pathlib, os
 import socket
 import threading
 from board import Board
@@ -122,9 +122,6 @@ def read_line_json(sock):
 
         except Exception:
             return None
-        
-# -----bên dưới là -----
-# ------ code cũ chưa xử lý --------
 
 def timer_loop():
     if args.turn_timer <= 0:
@@ -153,7 +150,24 @@ def timer_loop():
 LOG_DIR = pathlib.Path(args.logdir) if args.logdir else None
 if LOG_DIR:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-                   
+
+def log_move(room: RoomState, x, y, player):
+    if not LOG_DIR:
+        return
+    rec = {
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "room": room.room_id,
+        "player": player,
+        "x": x, "y": y,
+        "turn_after": room.turn,
+        "winner": room.winner
+    }
+    try:
+        with (LOG_DIR / f"{datetime.utcnow().date()}.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception as e:
+        print(f"[ERROR] Could not write log: {e}")
+                          
 def handle_client(sock, addr):    
     print(f"{addr} connected")    
     try:
