@@ -276,16 +276,18 @@ def shutdown_server():
         except:
             pass
         server_socket = None
-    print("[SERVER] Đã dừng hoàn toàn.")
             
 def main():     
-    global server_socket              
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    global ROOM
+    ROOM = RoomState("default")
     
+    host, port = args.host, args.port
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        server_socket.bind((host, port))
-    except OSError as e:
-        print(f"[x] Không thể bind tới {host}:{port} ({e}).")
+        server.bind((host, port))
+    except Exception as e:
+        print(f"[!] Không thể gán {host}:{port}. Error: {e}")
         return
 
     print("Khởi động server game Caro...")
