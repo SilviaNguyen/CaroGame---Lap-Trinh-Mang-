@@ -153,12 +153,14 @@ def draw_board(st):
         pygame.draw.line(screen, WINCOL, (sx,sy), (ex,ey), 7)
 
 def draw_status(st, net):
-    bar=pygame.Rect(0, H-BAR_H, W, BAR_H); pygame.draw.rect(screen, BAR, bar)
-    left=f"{'ON' if net.connected else 'OFF'} • Bạn: {st.me} • Lượt: {st.turn} • Phòng: {st.room}"
-    screen.blit(small.render(left,True,TXT),(12, H-BAR_H+8))
-    screen.blit(small.render(st.status,True,TXT),(12, H-BAR_H+28))
-    tips="C: Kết nối/Ngắt   N: Ván mới   Esc: Thoát"
-    w=tiny.size(tips)[0]; screen.blit(tiny.render(tips,True,MUTED),(W-w-12, H-BAR_H+36))
+    bar = pygame.Rect(0, H - BAR_H, W, BAR_H)
+    pygame.draw.rect(screen, BAR, bar)
+
+    info = f"{'ON' if net.connected else 'OFF'} • Bạn: {st.me} • Lượt: {st.turn} • Phòng: {st.room}"
+    screen.blit(small.render(info, True, TXT), (12, H - BAR_H + 8))
+
+    screen.blit(small.render(st.status, True, TXT), (12, H - BAR_H + 28))
+
 
 def main():
     running=True
