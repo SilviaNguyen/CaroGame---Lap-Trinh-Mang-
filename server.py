@@ -160,62 +160,63 @@ def _cleanup_conn(sock):
             room.broadcast({"type":"info","message":f"{player['symbol']} đã rời phòng. Đang chờ người chơi khác..."})
             if not room.players:
                 del rooms[room_id]
+def handle_client(sock, addr):
+    print(f"[CONNECT] {addr}")
+    buf = ""
     try:
         while True:
-            data = read_line_json(sock)
-            if data is None:
-                break
-        
-            t = data.get("type")
-            if t == "join":
-                name = data.get("name", "player")
-                ROOM.join(sock, name)
-                conn_info[sock] = {"name": name}
-                continue
-
-            info = conn_info.get(sock)
-            if not info:
-                try:
-                    sock.sendall((json.dumps({"type": "error", "message": "join first"}) + "\n").encode("utf-8"))
-                except:
-                    pass
-                continue
-
-            if t == "move":
-                sym = next((p["symbol"] for p in ROOM.players if p["sock"]==sock), None)
-                if not sym:
-                    try: sock.sendall((json.dumps({"type":"error","message":"no symbol yet"})+"\n").encode("utf-8"))
-                    except: pass
-                    continue
-                
-                try:
-                    x = int(data.get("x",-1)); y = int(data.get("y",-1))
-                except:
-                    x, y = -1, -1
-                
-                res = ROOM.make_move(x,y,sym)
-                if res.get("type")=="error":
-                    try: sock.sendall((json.dumps(res)+"\n").encode("utf-8"))
-                    except: pass
-                else:
-                    try: log_move(ROOM, x, y, sym)
-                    except: pass
-                continue
-
-    except Exception as e:
-        print(f"[!] {addr} error: {e}")
+            data = sock.recv(4096)
+            if not data: break
+            buf += data.decode("utf-8")
+            while "\n" in buf:
+                line, buf = buf.split("\n",1)
+                line=line.strip()
+                if not line: continue
+                try: msg = json.loads(line)
+                except: continue
+                t = msg.get("type","")
+                with lock:
+                    if t=="queue":
+                        action = msg.get("action","join")
+                        if action=="join":
+                            if not any(i["sock"]==sock for i in mm_queue):
+                                mm_queue.append({"sock":sock,"addr":addr})
+                                sock.sendall((json.dumps({"type":"info","message":"Đã vào hàng đợi ghép cặp"})+"\n").encode("utf-8"))
+                                _try_match_locked()
+                        elif action=="leave": _leave_queue_locked(sock)
+                    elif t=="move":
+                        cm = conn_map.get(sock)
+                        if cm: cm_room = rooms.get(cm["room"])
+                        if cm_room: cm_room.handle_move(cm["player"], int(msg.get("x",-1)), int(msg.get("y",-1)))
+                    elif t=="reset":
+                        cm = conn_map.get(sock)
+                        if cm:
+                            cm_room = rooms.get(cm["room"])
+                            if cm_room and len(cm_room.players)==2:
+                                cm_room.board.reset()
+                                cm_room.board.turn="X"
+                                cm_room.deadline=time.time()+args.turn_timer
+                                cm_room.push_state()
+                    elif t=="sync":
+                        cm = conn_map.get(sock)
+                        if cm:
+                            cm_room = rooms.get(cm["room"])
+                            if cm_room:
+                                b = cm_room.board
+                                sock.sendall((json.dumps({
+                                    "type":"update",
+                                    "board":b.to_list(),
+                                    "turn":b.turn,
+                                    "winner":b.winner,
+                                    "draw":b.is_draw(),
+                                    "win_line":b.win_line,
+                                    "deadline": cm_room.deadline,
+                                    "turn_seconds": args.turn_timer
+                                })+"\n").encode("utf-8"))
     finally:
-        info = conn_info.pop(sock,None)
-        if info:
-            with ROOM.lock:
-                ROOM.players = [p for p in ROOM.players if p["sock"]!=sock]
-                if len(ROOM.players)<2:
-                    ROOM.winner=None
-                    ROOM.board.reset()
-                    ROOM.status()
+        _cleanup_conn(sock)
         try: sock.close()
         except: pass
-        print(f"[x] {addr} disconnected")
             
 def main():     
     global ROOM
