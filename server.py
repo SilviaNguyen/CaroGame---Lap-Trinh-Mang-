@@ -143,6 +143,23 @@ def _timeout_check_loop():
                         room.board.winner = winner
                         room.push_state()
                         room.broadcast({"type":"end","message":f"{loser} hết giờ • {winner} thắng!","win_line":room.board.win_line})
+
+def _cleanup_conn(sock):
+    with lock:
+        _leave_queue_locked(sock)
+        info = conn_map.pop(sock,None)
+        if not info: return
+        room_id = info["room"]; player = info["player"]
+        room = rooms.get(room_id)
+        if not room: return
+        with room.lock:
+            if player in room.players:
+                room.players.remove(player)
+            room.board.reset()
+            room.deadline = None
+            room.broadcast({"type":"info","message":f"{player['symbol']} đã rời phòng. Đang chờ người chơi khác..."})
+            if not room.players:
+                del rooms[room_id]
     try:
         while True:
             data = read_line_json(sock)
