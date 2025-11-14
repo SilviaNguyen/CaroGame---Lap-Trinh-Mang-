@@ -56,32 +56,27 @@ class RoomState:
             "turn_seconds": args.turn_timer
         }
         self.broadcast(msg)
-    def join(self, sock, name):
+
+    def join(self, sock, addr, force_symbol=None):
         with self.lock:
             if len(self.players) >= 2:
-                self._send_one({"sock":sock}, {"type":"error","message":"room full"})
-                return
-            self.players.append({"sock": sock, "name": name, "symbol": None})
-            self.assign_symbols_if_ready()
-                 
-    def handle_move(self, x, y, player_symbol): 
-        with self.lock:
-            if self.winner:
-                return {"type": "error", "message": "Game finished"}
-            if player_symbol != self.turn:
-                return {"type": "error", "message": "Calm down. It is not your turn!"}
+                self.send_one({"sock": sock}, {"type":"error","message":"Room full"})
+                return None
+            used_symbols = {p["symbol"] for p in self.players}
+            sym = force_symbol or ("X" if "X" not in used_symbols else "O")
+            player = {"sock": sock, "addr": addr, "symbol": sym}
+            self.players.append(player)
+            conn_map[sock] = {"room": self.room_id, "player": player}
+            self.send_one(player, {"type":"welcome","room":self.room_id,"symbol":sym})
+            if len(self.players) == 2:
+                self.board.reset()
+                self.board.turn = "X"
+                self.deadline = time.time() + args.turn_timer
+                self.push_state()
+            else:
+                self.send_one(player, {"type":"info","message":"Đang đợi người chơi thứ hai..."})
+            return player
 
-            valid = self.board.place(x, y, player_symbol)
-            if not valid:
-                return {"type": "error", "message": "Invalid move"}
-
-            if self.board.check_win_from(x, y):
-                self.winner = player_symbol
-            elif self.board.is_draw():
-                self.winner = "draw"
-
-            self.push_state(last={"x": x, "y": y, "player": player_symbol})
-            return {"type": "valid"}
 
 def read_line_json(sock):
     buffer = ""
