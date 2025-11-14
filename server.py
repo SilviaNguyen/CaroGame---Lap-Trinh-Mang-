@@ -29,53 +29,33 @@ class RoomState:
         self.players = []
         self.turn = "X"
         self.winner = None
+        self.deadline = None
         self.lock = threading.Lock()
-        self.last_move_ts = time.time()
-        self.timer_duration = args.turn_timer
 
     def broadcast(self, obj):
         data = (json.dumps(obj) + "\n").encode("utf-8")
         for p in list(self.players):
             try:
                 p["sock"].sendall(data)
-            except Exception:
-                pass
+            except: pass
 
-    def _send_one(self, p, obj):
+    def send_one(self, player, obj):
         try:
-            data = (json.dumps(obj) + "\n").encode("utf-8")
-            p["sock"].sendall(data)
-        except Exception:
-            pass
-    def send_assign(self, p):
-        msg = {"type": "assign", "symbol": p["symbol"], "your_turn": (p["symbol"] == self.turn)}
-        self._send_one(p, msg)
+            player["sock"].sendall((json.dumps(obj)+"\n").encode("utf-8"))
+        except: pass
 
-    def assign_symbols_if_ready(self):
-        if len(self.players) == 2:
-            self.players[0]["symbol"] = "X"
-            self.players[1]["symbol"] = "O"
-            self.board.reset()
-            self.turn = self.board.turn
-            self.winner = None
-            self.last_move_ts = time.time()
-            for p in self.players:
-                self.send_assign(p)
-            self.push_state()
-     
-    def status(self, last=None):
-        grid = self.board.to_list() if hasattr(self.board, "to_list") else getattr(self.board, "grid", None)
+    def push_state(self):
         msg = {
-            "type": "state",
-            "grid": grid,
-            "turn": self.turn,
-            "winner": self.winner,
-            "last": last,
-            "timer_duration": args.turn_timer,
-            "last_move_ts": self.last_move_ts
+            "type":"update",
+            "board": self.board.to_list(),
+            "turn": self.board.turn,
+            "winner": self.board.winner,
+            "draw": self.board.is_draw(),
+            "win_line": getattr(self.board,"win_line",None),
+            "deadline": self.deadline,
+            "turn_seconds": args.turn_timer
         }
         self.broadcast(msg)
-            
     def join(self, sock, name):
         with self.lock:
             if len(self.players) >= 2:
