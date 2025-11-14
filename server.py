@@ -160,6 +160,7 @@ def _cleanup_conn(sock):
             room.broadcast({"type":"info","message":f"{player['symbol']} đã rời phòng. Đang chờ người chơi khác..."})
             if not room.players:
                 del rooms[room_id]
+
 def handle_client(sock, addr):
     print(f"[CONNECT] {addr}")
     buf = ""
@@ -217,38 +218,24 @@ def handle_client(sock, addr):
         _cleanup_conn(sock)
         try: sock.close()
         except: pass
-            
-def main():     
-    global ROOM
-    ROOM = RoomState("default")
-    
-    host, port = args.host, args.port
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        server.bind((host, port))
-    except Exception as e:
-        print(f"[!] Không thể gán {host}:{port}. Error: {e}")
-        return
-    server.listen(5)
-    print(f"[OK] Server listening on {host}:{port}")
+        print(f"[DISCONNECT] {addr}")
 
-    if args.turn_timer > 0:
-        threading.Thread(target=timer_loop, daemon=True).start()
-
+def main():
+    threading.Thread(target=_timeout_check_loop,daemon=True).start()
+    server = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+    server.bind((args.host,args.port))
+    server.listen(64)
+    print(f"[OK] Server listening on {args.host}:{args.port}")
     try:
         while True:
             client, addr = server.accept()
-            threading.Thread(target=handle_client, args=(client, addr), daemon=True).start()
+            threading.Thread(target=handle_client,args=(client,addr),daemon=True).start()
     except KeyboardInterrupt:
-        print("Shutting down server (KeyboardInterrupt).")
-    except Exception as e:
-        print(f"Server main loop error: {e}")
+        print("Server shutdown")
     finally:
-        try:
-            server.close()
-        except:
-            pass
+        try: server.close()
+        except: pass
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
