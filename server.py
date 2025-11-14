@@ -99,28 +99,33 @@ class RoomState:
             elif board.is_draw():
                 self.broadcast({"type":"end","message":"Hòa!","win_line":None})
 
-def read_line_json(sock):
-    buffer = ""
-    while True:
+def _gen_room_id(prefix="RM", length=4):
+    chars = string.ascii_uppercase + string.digits
+    return f"{prefix}-"+ "".join(random.choices(chars,k=length))
+
+def _leave_queue_locked(sock):
+    for i in range(len(mm_queue)-1,-1,-1):
+        if mm_queue[i]["sock"]==sock:
+            mm_queue.pop(i)
+            try: sock.sendall((json.dumps({"type":"info","message":"Left queue"})+"\n").encode("utf-8"))
+            except: pass
+
+def _try_match_locked():
+    while len(mm_queue) >= 2:
+        a = mm_queue.pop(0)
+        b = mm_queue.pop(0)
+        sock1, addr1 = a["sock"], a["addr"]
+        sock2, addr2 = b["sock"], b["addr"]
+        if sock1 in conn_map or sock2 in conn_map: continue
+        room_id = _gen_room_id()
+        room = RoomState(room_id)
+        rooms[room_id] = room
+        room.join(sock1, addr1, "X")
+        room.join(sock2, addr2, "O")
         try:
-            data = sock.recv(1024)
-            if not data:
-                return None
-
-            buffer += data.decode("utf-8", "ignore")
-
-            while "\n" in buffer:
-                line, buffer = buffer.split("\n", 1)
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    return json.loads(line)
-                except Exception:
-                    return {"type": "error", "message": "bad json"}
-
-        except Exception:
-            return None
+            sock1.sendall((json.dumps({"type":"info","message":f"Đã ghép cặp • Phòng: {room_id}"})+"\n").encode("utf-8"))
+            sock2.sendall((json.dumps({"type":"info","message":f"Đã ghép cặp • Phòng: {room_id}"})+"\n").encode("utf-8"))
+        except: pass
 
 def timer_loop():
     if args.turn_timer <= 0:
