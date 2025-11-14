@@ -77,6 +77,27 @@ class RoomState:
                 self.send_one(player, {"type":"info","message":"Đang đợi người chơi thứ hai..."})
             return player
 
+    def handle_move(self, player, x, y):
+        with self.lock:
+            board = self.board
+            if player not in self.players:
+                self.send_one(player, {"type":"error","message":"Bạn không còn trong phòng"})
+                return
+            if board.winner:
+                self.send_one(player, {"type":"error","message":"Ván đã kết thúc"})
+                return
+            if board.turn != player["symbol"]:
+                self.send_one(player, {"type":"error","message":"Chưa đến lượt bạn"})
+                return
+            if not board.place(x, y, player["symbol"]):
+                self.send_one(player, {"type":"error","message":"Nước đi không hợp lệ"})
+                return
+            self.deadline = time.time() + args.turn_timer
+            self.push_state()
+            if board.winner:
+                self.broadcast({"type":"end","message":f"Người chơi {board.winner} thắng!","win_line":board.win_line})
+            elif board.is_draw():
+                self.broadcast({"type":"end","message":"Hòa!","win_line":None})
 
 def read_line_json(sock):
     buffer = ""
