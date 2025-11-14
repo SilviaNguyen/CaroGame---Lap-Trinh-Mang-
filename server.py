@@ -1,8 +1,7 @@
 import json, argparse, pathlib, os
-import socket
-import threading
+import socket, threading, time, random, string
 from board import Board
-import time, datetime
+from datetime import datetime
 
 def parse_args():
     p = argparse.ArgumentParser(description="Caro Game Server")
@@ -10,15 +9,19 @@ def parse_args():
     p.add_argument("--port", type=int, default=5000)
     p.add_argument("--size", type=int, default=15)
     p.add_argument("--win", type=int, default=5)
-    p.add_argument("--logdir", default="", help="Thư mục ghi log; rỗng =off")
-    p.add_argument("--enable-chat", action="store_true")
-    p.add_argument("--turn-timer", type=int, default=30, help="Thời gian tối đa mỗi lượt (giây); 0 = off. VD: 30")
+    p.add_argument("--logdir", default="", help="Thư mục ghi log; rỗng = off")
+    p.add_argument("--turn-timer", type=int, default=30, help="Thời gian tối đa mỗi lượt (giây); 0 = off")
     return p.parse_args()
 
 args = parse_args()
+rooms = {}
+conn_map = {}
+mm_queue = []
+lock = threading.Lock()
+LOG_DIR = pathlib.Path(args.logdir) if args.logdir else None
+if LOG_DIR:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-ROOM = None
-conn_info = {} 
 class RoomState:
     def __init__(self, room_id: str):
         self.room_id = room_id
