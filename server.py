@@ -127,53 +127,22 @@ def _try_match_locked():
             sock2.sendall((json.dumps({"type":"info","message":f"Đã ghép cặp • Phòng: {room_id}"})+"\n").encode("utf-8"))
         except: pass
 
-def timer_loop():
-    if args.turn_timer <= 0:
-        print("[INFO] Turn timer is disabled.")
-        return
-    
-    print(f"[INFO] Turn timer enabled: {args.turn_timer} seconds per turn.")
-    
+def _timeout_check_loop():
     while True:
-        time.sleep(0.5)
-        now =  time.time()
-        with ROOM.lock:
-            if ROOM.winner or len(ROOM.players) < 2:
-                continue
-            if now - ROOM.last_move_ts >= ROOM.timer_duration:
-                loser = ROOM.turn
-                ROOM.winner = "O" if loser == "X" else "X"
-                ROOM.last_move_ts = now
-                print(f"[TIMER] Người chơi ({loser}) hết thời gian! => {ROOM.winner} thắng.")
-                ROOM.broadcast({
-                    "type": "timeout",
-                    "message": f"Hết giờ! Người chơi {loser} đã thua."
-                })
-                ROOM.status()
-
-LOG_DIR = pathlib.Path(args.logdir) if args.logdir else None
-if LOG_DIR:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-def log_move(room: RoomState, x, y, player):
-    if not LOG_DIR:
-        return
-    rec = {
-        "ts": datetime.utcnow().isoformat() + "Z",
-        "room": room.room_id,
-        "player": player,
-        "x": x, "y": y,
-        "turn_after": room.turn,
-        "winner": room.winner
-    }
-    try:
-        with (LOG_DIR / f"{datetime.utcnow().date()}.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec) + "\n")
-    except Exception as e:
-        print(f"[ERROR] Could not write log: {e}")
-                          
-def handle_client(sock, addr):    
-    print(f"{addr} connected")    
+        time.sleep(0.25)
+        now = time.time()
+        with lock:
+            for room in rooms.values():
+                with room.lock:
+                    if len(room.players)<2: continue
+                    if room.board.winner or room.board.is_draw(): continue
+                    if not room.deadline: continue
+                    if now >= room.deadline:
+                        loser = room.board.turn
+                        winner = "O" if loser=="X" else "X"
+                        room.board.winner = winner
+                        room.push_state()
+                        room.broadcast({"type":"end","message":f"{loser} hết giờ • {winner} thắng!","win_line":room.board.win_line})
     try:
         while True:
             data = read_line_json(sock)
