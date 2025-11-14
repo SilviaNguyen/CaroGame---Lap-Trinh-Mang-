@@ -8,7 +8,7 @@ class Board:
         self.moves = 0
         self.winner = None
         self.turn = "X"
-        self.win_line = None  # [(x,y), ...]
+        self.win_line = None  
 
     def reset(self):
         self.grid = [["" for _ in range(self.size)] for _ in range(self.size)]
@@ -35,11 +35,9 @@ class Board:
         return True
 
     def check_win(self, x: int, y: int, symbol: str):
-        # Trả về (True, danh_sách_tọa_độ) nếu thắng; ngược lại (False, None)
         dirs = [(1, 0), (0, 1), (1, 1), (1, -1)]
         for dx, dy in dirs:
             coords = [(x, y)]
-            # + hướng
             nx, ny = x, y
             while True:
                 nx += dx; ny += dy
@@ -47,7 +45,6 @@ class Board:
                     coords.append((nx, ny))
                 else:
                     break
-            # - hướng
             nx, ny = x, y
             while True:
                 nx -= dx; ny -= dy
