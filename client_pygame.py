@@ -1,11 +1,9 @@
 import sys, os, socket, threading
 from typing import Optional, Tuple
 import pygame
- integration
 import json
-
 from board import Board  
- main
+import time
 
 # ===================== Font helper (Unicode VN) =====================
 def _resolve_vn_font() -> Optional[str]:
@@ -95,6 +93,7 @@ PAL = {
     "O": (240, 83, 64),
     "TXT_LIGHT": (245, 251, 255),
     "TXT_DARK": (31, 41, 55),
+    "TXT_TIMER": (239, 68, 68), # Màu đỏ cho timer
     "MUTED_DARK": (82, 92, 105),
     "SIDEBAR_BG": (255, 255, 255),
     "BTN": (16, 185, 129),
@@ -180,10 +179,12 @@ class CaroApp:
             self.font  = pygame.font.Font(fp, 20)
             self.small = pygame.font.Font(fp, 16)
             self.big   = pygame.font.Font(fp, 34)
+            self.timer_font = pygame.font.Font(fp, 28) # Font cho timer
         else:
             self.font  = pygame.font.SysFont(None, 20)
             self.small = pygame.font.SysFont(None, 16)
             self.big   = pygame.font.SysFont(None, 34)
+            self.timer_font = pygame.font.SysFont(None, 32)
 
         tb_y = 20 + board_h + (self.toolbar_h-56)//2
         self.buttons = [
@@ -198,10 +199,13 @@ class CaroApp:
         self.board_card = pygame.Rect(20, 20, board_w, board_h)
         self.sidebar    = pygame.Rect(40 + board_w, 20, self.sidebar_w, board_h)
         self.toolbar    = pygame.Rect(20, 20+board_h, width-40, self.toolbar_h)
+        self.my_symbol = None
+        self.timer_duration = 0  # Sẽ nhận từ server
+        self.last_move_ts = 0    # Sẽ nhận từ server
+        self.time_remaining = 0  # Sẽ được tính toán
 
     # --------- Network callback ----------
     def on_message(self, line: str):
-integration
         try:
             data=json.loads(line)
         except json.JSONDecodeError:
@@ -222,45 +226,45 @@ integration
                 turn = data.get("turn")
                 winner = data.get("winner")
                 last_move = data.get("last")
-                # Cập nhật bàn cờ local theo grid nhận được
-                size =len(grid)
-                if size: 
-                    self.board.size = size
+                 # ===== Lấy thông tin timer "thật" từ server =====
+                self.timer_duration = data.get("timer_duration", 0)
+                self.last_move_ts = data.get("last_move_ts", 0)
+                if grid and isinstance(grid, list) and len(grid) > 0:
+                    self.board.size = len(grid)
                     self.board.grid = [row[:] for row in grid]
                     self.board.turn = turn
                     self.board.winner = winner
-                # Cập nhật thông báo trnajg thái
                 if winner:
-                    # có người thắng hoặc hòa
                     if winner in ("X", "O"):
-                        self.status = f"Ván đấu kết thúc! {winner} thắng." 
-                    else: 
+                        self.status = f"Ván đấu kết thúc! {winner} thắng."
+                    else:
                         self.status = "Ván đấu hòa!"
-                else: 
-                    #chưa có người thắng: thông báo lượt hiện tại
-                    if hasattr(self, "my_symbol") and self.my_symbol == turn:
-                        self.status = "Đến lược bạn đi "
-                    else: 
+                    self.time_remaining = 0 # Dừng timer khi có kết quả
+                else:
+                    # Xóa logic tự reset timer
+                    if self.my_symbol and self.my_symbol == turn:
+                        self.status = "Đến lượt bạn đi."
+                    else:
                         self.status = "Đang chờ lượt đối thủ..."
-                    # Nếu có nước đi cuối cùng và không phải do mình, hiển thị tọa độ đó
-                    if last_move and last_move.get("player") and last_move.get("player") != self.my_symbol:
+                    
+                    if last_move and last_move.get("player") != self.my_symbol:
                         lx, ly = last_move["x"], last_move["y"]
-                        self.status = f"Đối thủ đi ({lx},{ly})."+ self.status
+                        self.status = f"Đối thủ đi ({lx},{ly}). {self.status}"
+
             elif msg_type == "error":
                 # Báo lỗi từ server
                 err = data.get("message", "Đã có lỗi xảy ra")
                 self.status = "Lỗi" + err
+
             elif msg_type == "chat":
-                #Nhận tin nhắn chat
                 sender = data.get("from", "")
-                msg = data.get("message","")
-                # Hiển thị chat
+                msg = data.get("message", "")
                 if sender:
                     self.status = f"[Chat] {sender}:{msg}"
                 else:
                     self.status = f"[Chat] {msg}"
+
             else:
-                # Các loại thông điệp khác (nếu có )
                 print("Thông điệp không xử lý:", data)
 
         parts = line.split()
@@ -285,7 +289,6 @@ integration
                 self.status="Đối thủ yêu cầu Undo (board không hỗ trợ)."
         elif cmd in ("HELLO","WELCOME"):
             self.status="Server: "+" ".join(parts[1:])
-main
 
     # --------- Draw ----------
     def draw_bg(self):
@@ -346,16 +349,44 @@ main
 
     def draw_sidebar(self):
         soft_card(self.screen, self.sidebar, 24, PAL["SIDEBAR_BG"], PAL["SHADOW"], (0,10), 18)
-        pad=24; x=self.sidebar.x+pad; y=self.sidebar.y+pad
-        title=self.big.render("Trạng thái", True, PAL["TXT_DARK"]); self.screen.blit(title,(x,y)); y+=title.get_height()+8
-        used=render_text_wrapped(self.screen, self.status, self.font, PAL["TXT_DARK"],
-                                 pygame.Rect(x,y,self.sidebar.w-2*pad, 240)); y+=used+14
-        tips_title=self.font.render("Hướng dẫn", True, PAL["MUTED_DARK"]); self.screen.blit(tips_title,(x,y)); y+=tips_title.get_height()+6
-        tips=("• Click chuột để đánh.\n"
-              "• N: ván mới, U: Undo, C: Connect.\n"
-              "• Mặc định kết nối 127.0.0.1:5000.")
-        render_text_wrapped(self.screen, tips, self.small, PAL["MUTED_DARK"],
-                            pygame.Rect(x,y,self.sidebar.w-2*pad, 400))
+        pad = 24
+        x = self.sidebar.x + pad
+        y = self.sidebar.y + pad
+        # ===== Hiển thị đồng hồ =====
+        # Chỉ hiển thị nếu timer được server bật, và game đang chạy
+        if self.remote_enabled and self.timer_duration > 0 and self.time_remaining > 0 and not self.board.winner:
+            timer_str = f"{int(self.time_remaining)}"
+            
+            # Đổi màu timer
+            color = PAL["TXT_DARK"]
+            if self.time_remaining <= 10: # Nếu còn dưới 10s
+                color = PAL["TXT_TIMER"] # Đổi sang màu đỏ
+            
+            timer_img = self.timer_font.render(timer_str, True, color)
+            
+            # Căn phải
+            timer_rect = timer_img.get_rect(topright=(self.sidebar.right - pad, y))
+            self.screen.blit(timer_img, timer_rect)
+
+            # Vẽ chữ "Giây"
+            sec_img = self.small.render("giây", True, color)
+            self.screen.blit(sec_img, (timer_rect.left - sec_img.get_width() - 5, timer_rect.centery - sec_img.get_height()//2))
+
+            y += timer_img.get_height() + 16 # Thêm khoảng cách
+        
+        # Vẽ trạng thái
+        title = self.big.render("Trạng thái", True, PAL["TXT_DARK"])
+        self.screen.blit(title, (x, y))
+        y += title.get_height() + 8
+        
+        used = render_text_wrapped(self.screen, self.status, self.font, PAL["TXT_DARK"], pygame.Rect(x, y, self.sidebar.w - 2 * pad, 180))
+        y += used + 14
+        
+        tips_title = self.font.render("Hướng dẫn", True, PAL["MUTED_DARK"])
+        self.screen.blit(tips_title, (x, y))
+        y += tips_title.get_height() + 6
+        tips = "• Click chuột để đánh.\n• N: ván mới, U: Undo, C: Connect.\n• Mặc định kết nối 127.0.0.1:5000."
+        render_text_wrapped(self.screen, tips, self.small, PAL["MUTED_DARK"], pygame.Rect(x, y, self.sidebar.w - 2 * pad, 400))
 
     def draw_toolbar(self, mouse_pos):
         soft_card(self.screen, self.toolbar, 20, PAL["SIDEBAR_BG"], PAL["SHADOW"], (0,8), 14)
@@ -387,41 +418,39 @@ main
     def on_click(self, pos):
         for b in self.buttons:
             if b.rect.collidepoint(pos):
-integration
-                if b.text=="New": self.board.reset(); self._send(json.dumps({"type":"reset"})); self.status="Bắt đầu ván mới."
-                elif b.text=="Undo":
-                    if self.board.undo(): self._send(json.dumps({"type":"undo"})); self.status="Đã Undo."
-                elif b.text=="Connect": self.try_connect_dialog()
-                return
-                    # Khi đang chơi online: chỉ cho click nếu tới lượt mình
-        if self.remote_enabled and hasattr(self, "my_symbol") and self.my_symbol:
-            if self.board.winner:
-                return
-            if self.board.turn != self.my_symbol:
-                return
-
-        g=self.grid_at(pos)
-        if g and self.board.place(*g):
-            self.status=f"Đánh ({g[0]},{g[1]}). Lượt: {self.board.turn}"
-            self._send(json.dumps({"type":"move","x":g[0],"y":g[1]}))
-
-                if b.text=="New":
-                    self.board.reset(); self._send("RESET"); self.status="Bắt đầu ván mới."
-                elif b.text=="Undo":
-                    try:
-                        if self.board.undo(): self._send("UNDO"); self.status="Đã Undo."
-                    except Exception:
-                        self.status="Yêu cầu Undo (board không hỗ trợ)."
-                elif b.text=="Connect":
+                if b.text == "New":
+                    self.board.reset()
+                    self._send(json.dumps({"type": "reset"}))
+                    self.status = "Bắt đầu ván mới."
+                elif b.text == "Undo":
+                    if self.remote_enabled:
+                        self._send(json.dumps({"type":"undo"}))
+                        self.status = "Đã gửi yêu cầu Undo."
+                    else:
+                        self.status = "Chưa kết nối đến server - Không thể Undo."
+                elif b.text == "Connect":
                     self.try_connect_dialog()
                 return
+                    
+        if self.remote_enabled and self.my_symbol:
+            if self.board.winner:
+                self.status = "Ván đấu đã kết thúc. Bấm 'New' để chơi lại."
+                return
+            if self.board.turn != self.my_symbol:
+                self.status = "Chưa đến lượt của bạn!"
+                return
+        elif not self.remote_enabled and self.board.winner:
+            self.status = "Ván đấu đã kết thúc. Bấm 'New' để chơi lại."
+            return
+
         g = self.grid_at(pos)
         if g:
-            # Board.place của bạn cần symbol:
-            if self.board.place(g[0], g[1], self.board.turn):
-                self.status=f"Đánh ({g[0]},{g[1]}). Lượt: {self.board.turn}"
-                self._send(f"MOVE {g[0]} {g[1]}")
-main
+            current_turn_symbol = self.board.turn
+            if self.board.place(g[0], g[1], current_turn_symbol):
+                self.status = f"Đánh ({g[0]},{g[1]}). Lượt: {self.board.turn}"
+                # Xóa logic reset timer cục bộ
+                if self.remote_enabled:
+                    self._send(json.dumps({"type": "move", "x": g[0], "y": g[1]}))
 
     def _send(self, text: str):
         if self.remote_enabled:
@@ -430,19 +459,12 @@ main
     def try_connect_dialog(self):
         host="127.0.0.1"; port=5000
         try:
- integration
             self.net.connect(host,port)
             self.remote_enabled=True
             player_name = "player"
-            join_msg = {"type":"join","name": player_name}
+            join_msg = {"type":"join","name": player_name, "room": "default"}
             self.net.send.line(json.dumps(join_msg))
             self.status=f"Đã kết nối {host}:{port}. Đang chờ ghép phòng..."; 
-
-            self.net.connect(host, port)
-            self.remote_enabled=True
-            self.status=f"Đã kết nối {host}:{port}"
-            self._send("HELLO client")
- main
         except Exception as e:
             self.remote_enabled=False
             self.status=f"Không thể kết nối: {e}"
@@ -451,21 +473,41 @@ main
     def run(self):
         clock = pygame.time.Clock()
         while True:
+            
+            # ===== Tính toán timer "thật" =====
+            if (self.remote_enabled and 
+                self.timer_duration > 0 and 
+                self.last_move_ts > 0 and 
+                not self.board.winner):
+                
+                # Tính toán dựa trên thời gian hiện tại và timestamp từ server
+                elapsed = time.time() - self.last_move_ts
+                self.time_remaining = max(0, self.timer_duration - elapsed)
+            else:
+                self.time_remaining = 0 # Không có timer
+
+            # Xử lý input
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
-                    self.net.close(); pygame.quit(); sys.exit(0)
+                    self.net.close()
+                    pygame.quit()
+                    sys.exit(0)
                 elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                     self.on_click(ev.pos)
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key == pygame.K_n:
-                        self.board.reset(); self._send("RESET")
+                        self.board.reset()
+                        self._send(json.dumps({"type": "reset"}))
+                        self.status = "Bắt đầu ván mới."
                     elif ev.key == pygame.K_u:
-                        try:
-                            if self.board.undo(): self._send("UNDO")
-                        except Exception:
-                            pass
+                        if self.remote_enabled:
+                            self._send(json.dumps({"type":"undo"}))
+                            self.status = "Đã gửi yêu cầu Undo."
+                        else:
+                            self.status = "Chưa kết nối server - Không thể Undo."
                     elif ev.key == pygame.K_c:
                         self.try_connect_dialog()
+
             self.draw_all()
             clock.tick(60)
 

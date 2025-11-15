@@ -36,3 +36,17 @@ def test_two_clients_flow():
     st_a = read_line(a)
     st_b = read_line(b)
     assert st_a["type"] == "state" and st_b["type"] == "state"
+
+def test_undo_contract_simple():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM )
+    s.connect(("127.0.0.1", 5000))
+    s.sendall((json.dumps({"type":"join", "name":"t1", "room":"default"})+ "\n").encode("utf-8"))
+
+    s.sendall((json.dumps({"type":"move", "x":0, "y":0}) + "\n").encode("utf-8"))
+    time.sleep(0.1)
+
+    s.sendall((json.dumps({"type":"undo"}) + "\n").encode("utf-8"))
+    s.settimeout(0.5)
+    data = s.recv(4096).decode("utf-8")
+    assert "error" not in data.lower()
+    s.close()
