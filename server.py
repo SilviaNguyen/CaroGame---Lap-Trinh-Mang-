@@ -31,6 +31,8 @@ class RoomState:
         self.winner = None
         self.deadline = None
         self.lock = threading.Lock()
+        self.waiting_opponent = False
+
 
     def broadcast(self, obj):
         data = (json.dumps(obj) + "\n").encode("utf-8")
@@ -68,14 +70,22 @@ class RoomState:
             self.players.append(player)
             conn_map[sock] = {"room": self.room_id, "player": player}
             self.send_one(player, {"type":"welcome","room":self.room_id,"symbol":sym})
+            
+            if len(self.players) == 1:
+                self.deadline = None
+                self.send_one(player, {"type":"info","message":"Đang đợi người chơi thứ hai..."})
+                return player
+            
             if len(self.players) == 2:
                 self.board.reset()
                 self.board.turn = "X"
-                self.deadline = time.time() + args.turn_timer
+                if args.turn_timer > 0:
+                    self.deadline = time.time() + args.turn_timer
+                else:
+                    self.deadline = None
+                    
                 self.push_state()
-            else:
-                self.send_one(player, {"type":"info","message":"Đang đợi người chơi thứ hai..."})
-            return player
+                return player            
 
     def handle_move(self, player, x, y):
         with self.lock:
