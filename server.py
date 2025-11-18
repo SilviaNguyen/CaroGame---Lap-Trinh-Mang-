@@ -249,9 +249,16 @@ def handle_client(sock, addr):
     buf = ""
     try:
         while True:
-            data = sock.recv(4096)
-            if not data: break
-            buf += data.decode("utf-8")
+            try:
+                data = sock.recv(1024)
+                if not data: break
+                buf += data.decode("utf-8")
+            except (ConnectionResetError, ConnectionAbortedError):
+                print(f"[WARN] {addr} đã đóng kết nối đột ngột")
+                break
+            except Exception as e:
+                print(f"[ERROR] {addr}: {e}")
+                break
             while "\n" in buf:
                 line, buf = buf.split("\n",1)
                 line=line.strip()
@@ -276,11 +283,24 @@ def handle_client(sock, addr):
                         cm = conn_map.get(sock)
                         if cm:
                             cm_room = rooms.get(cm["room"])
-                            if cm_room and len(cm_room.players)==2:
-                                cm_room.board.reset()
-                                cm_room.board.turn="X"
-                                cm_room.deadline=time.time()+args.turn_timer
-                                cm_room.push_state()
+                            if cm_room:
+                                with cm_room.lock:
+                                    player = cm["player"]
+                                    if player in cm_room.players:
+                                        cm_room.players.remove(player)
+                                    conn_map.pop(sock, None)
+                                    
+                                    mm_queue.append({"sock": sock, "addr": addr})
+                                    sock.sendall(json.dumps({
+                                        "type":"info",
+                                        "message":"Đã đặt lại ván và vào hàng đợi ghép cặp"
+                                    }).encode("utf-8"))
+                                    
+                                    cm_room.waiting_opponent = len(cm_room.players) > 0
+                                    if not cm_room.players:
+                                        del rooms[cm_room.room_id]
+                                    _try_match_locked()
+
                     elif t=="sync":
                         cm = conn_map.get(sock)
                         if cm:
