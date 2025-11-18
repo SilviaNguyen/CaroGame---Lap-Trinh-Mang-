@@ -221,23 +221,33 @@ def handle_client(sock, addr):
         print(f"[DISCONNECT] {addr}")
 
 def main():
-    threading.Thread(target=_timeout_check_loop,daemon=True).start()
-    server = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-    server.bind((args.host,args.port))
+    threading.Thread(target=_timeout_check_loop, daemon=True).start()
+    threading.Thread(target=_queue_health_check_loop, daemon=True).start()
+    
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((args.host, args.port))
     server.listen(64)
     server.settimeout(1.0)
     print(f"[OK] Server listening on {args.host}:{args.port}")
+
+    client_sockets = []
+
     try:
         while True:
             try:
                 client, addr = server.accept()
+                client_sockets.append(client)
                 threading.Thread(target=handle_client, args=(client, addr), daemon=True).start()
             except socket.timeout:
                 continue
     except KeyboardInterrupt:
-        print("[INFO] KeyboardInterrupt detected")
+        print("[INFO] Server đang tắt (Ctrl+C)")
     finally:
+        for csock in client_sockets:
+            try:
+                csock.close()
+            except: pass
         try:
             server.close()
         except:
