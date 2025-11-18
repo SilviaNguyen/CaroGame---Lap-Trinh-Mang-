@@ -17,6 +17,7 @@ args = parse_args()
 rooms = {}
 conn_map = {}
 mm_queue = []
+rematch_queue = []
 lock = threading.Lock()
 LOG_DIR = pathlib.Path(args.logdir) if args.logdir else None
 if LOG_DIR:
@@ -147,6 +148,52 @@ def _try_match_locked():
                     room.waiting_opponent = len(room.players) < 2
                     room.push_state()
                     matched = True
+
+        i = 0
+        while i < len(rematch_queue):
+            rematch_player = rematch_queue[i]
+            if mm_queue:
+                queue_player = mm_queue.pop(0)
+                new_room_id = _gen_room_id()
+                new_room = RoomState(new_room_id)
+                rooms[new_room_id] = new_room
+                new_room.join(rematch_player["sock"], rematch_player["addr"], "X")
+                new_room.join(queue_player["sock"], queue_player["addr"], "O")
+                new_room.push_state()
+                try:
+                    for sock, pname in ((rematch_player["sock"], "X"), (queue_player["sock"], "O")):
+                        sock.sendall(json.dumps({
+                            "type":"info",
+                            "message":f"Đã ghép cặp • Phòng: {new_room_id}"
+                        }).encode("utf-8"))
+                except: pass
+                rematch_queue.pop(i)
+                matched = True
+            else:
+                i += 1
+
+        i = 0
+        while i < len(rematch_queue) - 1:
+            p1 = rematch_queue[i]
+            p2 = rematch_queue[i+1]
+
+            new_room_id = _gen_room_id()
+            new_room = RoomState(new_room_id)
+            rooms[new_room_id] = new_room
+            new_room.join(p1["sock"], p1["addr"], "X")
+            new_room.join(p2["sock"], p2["addr"], "O")
+            new_room.push_state()
+            try:
+                for sock, pname in ((p1["sock"], "X"), (p2["sock"], "O")):
+                    sock.sendall(json.dumps({
+                        "type":"info",
+                        "message":f"Đã ghép cặp • Phòng: {new_room_id}"
+                    }).encode("utf-8"))
+            except: pass
+
+            rematch_queue.pop(i)
+            rematch_queue.pop(i)
+            matched = True
 
         while len(mm_queue) >= 2:
             a = mm_queue.pop(0)
