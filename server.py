@@ -226,16 +226,23 @@ def main():
     server.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
     server.bind((args.host,args.port))
     server.listen(64)
+    server.settimeout(1.0)
     print(f"[OK] Server listening on {args.host}:{args.port}")
     try:
         while True:
-            client, addr = server.accept()
-            threading.Thread(target=handle_client,args=(client,addr),daemon=True).start()
+            try:
+                client, addr = server.accept()
+                threading.Thread(target=handle_client, args=(client, addr), daemon=True).start()
+            except socket.timeout:
+                continue
     except KeyboardInterrupt:
-        print("Server shutdown")
+        print("[INFO] KeyboardInterrupt detected")
     finally:
-        try: server.close()
-        except: pass
+        try:
+            server.close()
+        except:
+            pass
+        print("[INFO] Server closed")
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
