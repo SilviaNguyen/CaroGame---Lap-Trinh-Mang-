@@ -53,7 +53,9 @@ DIV3 = pygame.Rect(DIV2.right + GAP, DIV2.top, (BOARD_W - 2*GAP)//3, BOTTOM_H)
 DIV4 = pygame.Rect(DIV3.right + GAP, DIV2.top, (BOARD_W - 2*GAP)//3, BOTTOM_H)
 
 QUEUE_TICK = pygame.USEREVENT + 1
+HEARTBEAT_TICK = pygame.USEREVENT + 2
 QUEUE_INTERVAL_MS = 2000
+HEARTBEAT_INTERVAL_MS = 5000  # 5s ping server
 
 class Net:
     def __init__(self, onmsg):
@@ -61,11 +63,16 @@ class Net:
     def connect(self, host, port):
         self.close()
         try:
-            s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.connect((host,port))
-            self.sock=s; self.connected=True; threading.Thread(target=self.reader, daemon=True).start()
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((host, port))
+            self.sock = s
+            self.connected = True
+            threading.Thread(target=self.reader, daemon=True).start()
             return True
         except Exception as e:
-            self.err=str(e); self.connected=False; return False
+            self.err = f"Không kết nối được: {e}"
+            self.connected = False
+            return False
     def reader(self):
         try:
             while self.connected and self.sock:
@@ -93,6 +100,10 @@ class Net:
             if self.sock: self.sock.close()
         except: pass
         self.sock=None; self.connected=False
+    def start_heartbeat(self):
+        if self.connected: pygame.time.set_timer(HEARTBEAT_TICK, HEARTBEAT_INTERVAL_MS)
+    def stop_heartbeat(self):
+        pygame.time.set_timer(HEARTBEAT_TICK, 0)
 
 class State:
     def __init__(self):
@@ -128,9 +139,39 @@ class State:
         elif t in ("info","error"):
             msg=m.get("message","")
             if msg: self.status=msg
+        elif t=="assign":
+            self.me = m.get("symbol","?")
+            self.status = f"Bạn là {self.me}"
+            your_turn = m.get("your_turn", False)
+            if your_turn:
+                self.status += " • Đến lượt bạn"
+            else:
+                self.status += " • Chưa đến lượt bạn"
+        elif t=="info":
+            msg=m.get("message","")
+            if msg:
+                self.status=msg
+                if "đang chờ người chơi khác" in msg.lower():
+                    self.winner=None
+                    self.draw=False
+
 
 st=State()
 net=Net(lambda m: st.apply(m))
+def join_queue():
+    if net.connected:
+        st.in_queue = True
+        st.room = "?"
+        st.status = "Đang xếp hàng ghép cặp..."
+        net.send({"type": "queue", "action": "join", "name": "player"})
+        pygame.time.set_timer(QUEUE_TICK, QUEUE_INTERVAL_MS)
+
+def leave_queue():
+    if net.connected:
+        st.in_queue = False
+        st.room = "?"
+        net.send({"type": "queue", "action": "leave"})
+        pygame.time.set_timer(QUEUE_TICK, 0)
 
 def draw_frame(rect):
     pygame.draw.rect(screen, PANEL, rect, border_radius=0)
@@ -209,16 +250,17 @@ def draw_bottom_controls():
         en = False  
     draw_button(DIV2, text_connect, enabled=en)
 
-    # Nút giữa: Ván mới
-    draw_button(DIV3, "Ván mới", enabled=net.connected)
+    # Nút ván mới
+    can_reset = net.connected and (st.winner or st.draw or len(st.grid)>0)
+    draw_button(DIV3, "Ván mới", enabled=can_reset)
 
-    # Nút phải: Hủy kết nối
+    # Nút hủy kết nối
     draw_button(DIV4, "Hủy kết nối", enabled=net.connected)
+
 
 def draw_timer(st):
     draw_frame(DIV5)
     inner = DIV5.inflate(-12, -12)
-
     if st.winner or st.draw:
         ratio = 0.0
         text = f"Ván đã kết thúc • {st.winner} thắng!" if st.winner else "Ván hòa!"
@@ -228,30 +270,11 @@ def draw_timer(st):
         text   = f"Lượt: {st.turn}  •  {int(remain)}s"
     else:
         ratio = 0.0
-        text = ""
-
+        text = "Lượt: —  •  —s"
     bar_h = 16
     bar_rect = pygame.Rect(inner.x, inner.centery - bar_h//2, inner.width, bar_h)
     bg_col = (28,48,64)
-    fill_col = (60,160,100) if st.me == st.turn else (150,120,60)
-
-    if not (st.winner or st.draw):
-        pill_bar(screen, bar_rect, ratio, bg_col, fill_col)
-
-    label = small.render(text, True, (255,255,255))
-    screen.blit(label, label.get_rect(center=(bar_rect.centerx, bar_rect.top - 12)))
-
-    draw_frame(DIV5)
-    inner = DIV5.inflate(-12, -12)
-    if st.deadline:
-        remain = max(0.0, st.deadline - time.time())
-        ratio  = min(1.0, remain / max(1, st.turn_seconds))
-        text   = f"Lượt: {st.turn}  •  {int(remain)}s"
-    else:
-        ratio = 0.0; text = "Lượt: —  •  —s"
-    bar_h = 16
-    bar_rect = pygame.Rect(inner.x, inner.centery - bar_h//2, inner.width, bar_h)
-    bg_col = (28,48,64); fill_col = (60,160,100) if st.me==st.turn else (150,120,60)
+    fill_col = (60,160,100) if st.me==st.turn else (150,120,60)
     pill_bar(screen, bar_rect, ratio, bg_col, fill_col)
     label = small.render(text, True, (255,255,255))
     screen.blit(label, label.get_rect(center=(bar_rect.centerx, bar_rect.top - 12)))
@@ -301,10 +324,12 @@ def board_cell_from_pos(pos):
     grid_rect.height = CELL * SIZE
     grid_rect.x = inner.x + (inner.width  - grid_rect.width) // 2
     grid_rect.y = inner.y + (inner.height - grid_rect.height) // 2
-    if not grid_rect.collidepoint(pos): return None
+    if not grid_rect.collidepoint(pos): 
+        return None
     gx = (pos[0] - grid_rect.x) // CELL
     gy = (pos[1] - grid_rect.y) // CELL
-    if 0 <= gx < SIZE and 0 <= gy < SIZE: return int(gx), int(gy)
+    if 0 <= gx < SIZE and 0 <= gy < SIZE: 
+        return int(gx), int(gy)
     return None
 
 def main():
@@ -320,17 +345,23 @@ def main():
                     if not net.connected:
                         if net.connect(HOST, PORT):
                             st.status="Đã kết nối • Đang xếp hàng ghép cặp..."
-                            st.in_queue=True
-                            net.send({"type":"queue","action":"join"})
-                            pygame.time.set_timer(QUEUE_TICK, QUEUE_INTERVAL_MS)
+                            join_queue()
+
                         else:
-                            st.status=f"Lỗi: {net.err}"
+                            print(f"[DEBUG] Kết nối thất bại: {net.err}") 
+                            st.status = "Oops! Không kết nối được với máy chủ. Vui lòng thử lại sau."
+
                 elif e.key == pygame.K_n and net.connected:
                     net.send({"type":"reset"})
             elif e.type == QUEUE_TICK:
                 if st.in_queue and net.connected and st.room in ("?","",None):
-                    net.send({"type":"queue","action":"join"})
+                    net.send({"type":"queue","action":"join","name":"player"})
+            elif e.type == HEARTBEAT_TICK:
+                if net.connected:
+                    try: net.send({"type":"ping"})
+                    except: st.status="Mất kết nối với máy chủ rồi :(("; net.connected=False; st.in_queue=False; st.room="?"; net.stop_heartbeat()
             elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                # giữ nguyên logic click
                 cell = board_cell_from_pos(e.pos)
                 if cell and net.connected and not st.winner and not st.draw:
                     if st.me != st.turn:
@@ -345,17 +376,20 @@ def main():
                     if not net.connected:
                         if net.connect(HOST, PORT):
                             st.status="Đã kết nối • Đang xếp hàng ghép cặp..."
-                            st.in_queue=True
-                            net.send({"type":"queue","action":"join"})
-                            pygame.time.set_timer(QUEUE_TICK, QUEUE_INTERVAL_MS)
+                            join_queue()
+                            net.start_heartbeat()
                         else:
                             st.status=f"Lỗi: {net.err}"
                 elif DIV3.collidepoint(e.pos):
-                    if net.connected: net.send({"type":"reset"})
-                elif DIV4.collidepoint(e.pos):
                     if net.connected:
-                        net.close(); st.status="Đã ngắt kết nối"; st.room="?"; st.in_queue=False
-                        pygame.time.set_timer(QUEUE_TICK, 0)
+                        leave_queue()
+                        net.send({"type":"reset"})
+                        join_queue()
+                elif DIV4.collidepoint(e.pos):
+                        leave_queue()
+                        net.close()
+                        st.status="Đã ngắt kết nối"
+                        net.stop_heartbeat()
 
         screen.fill(BG)
         draw_board(st)
@@ -368,5 +402,4 @@ def main():
     net.close(); pygame.quit(); sys.exit()
 
 if __name__ == "__main__":
-    st = State(); net = Net(lambda m: st.apply(m))
     main()
