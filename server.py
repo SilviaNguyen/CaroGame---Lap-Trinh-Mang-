@@ -206,19 +206,43 @@ def _timeout_check_loop():
 def _cleanup_conn(sock):
     with lock:
         _leave_queue_locked(sock)
-        info = conn_map.pop(sock,None)
-        if not info: return
-        room_id = info["room"]; player = info["player"]
+        info = conn_map.pop(sock, None)
+        if not info: 
+            return
+        room_id = info["room"]
+        player = info["player"]
         room = rooms.get(room_id)
-        if not room: return
-        with room.lock:
-            if player in room.players:
-                room.players.remove(player)
-            room.board.reset()
-            room.deadline = None
-            room.broadcast({"type":"info","message":f"{player['symbol']} đã rời phòng. Đang chờ người chơi khác..."})
-            if not room.players:
-                del rooms[room_id]
+        if room:
+            with room.lock:
+                if player in room.players:
+                    room.players.remove(player)
+                    # Nếu còn 1 player → tuyên bố thắng
+                    if room.players:
+                        remaining_player = room.players[0]
+                        room.board.winner = remaining_player["symbol"]
+                        room.push_state()
+                        room.broadcast({
+                            "type":"end",
+                            "message": f"{remaining_player['symbol']} thắng do đối thủ rời phòng!",
+                            "win_line": room.board.win_line
+                        })
+                        room.players.clear()
+                        room.waiting_opponent = False
+                    else:
+                        del rooms[room_id]
+        _try_match_locked()
+
+def _queue_health_check_loop():
+    while True:
+        time.sleep(1)
+        with lock:
+            for entry in mm_queue[:]:
+                try:
+                    entry["sock"].send(b"")
+                except:
+                    print(f"[DISCONNECT] {entry['addr']} (queue)")
+                    _cleanup_conn(entry["sock"])
+                    _try_match_locked()
 
 def handle_client(sock, addr):
     print(f"[CONNECT] {addr}")
