@@ -295,33 +295,35 @@ def handle_client(sock, addr):
                         if cm_room: cm_room.handle_move(cm["player"], int(msg.get("x",-1)), int(msg.get("y",-1)))
                     elif t == "reset":
                         cm = conn_map.get(sock)
-                        if cm:
-                            cm_room = rooms.get(cm["room"])
-                            if cm_room:
-                                with cm_room.lock:
-                                    player = cm["player"]
+                        if not cm: 
+                            if not any(i["sock"] == sock for i in mm_queue):
+                                mm_queue.append({"sock": sock, "addr": addr})
+                            _try_match_locked()
+                            continue
 
-                                    if player in cm_room.players:
-                                        cm_room.players.remove(player)
-
-                                    conn_map.pop(sock, None)
-
-                                    if len(cm_room.players) == 1:
-                                        other = cm_room.players[0]
-                                        cm_room.send_one(other, {
-                                            "type": "info",
-                                            "message": "Đối thủ đã rời phòng. Bạn đang chờ ghép trận mới."
-                                        })
-                                        cm_room.waiting_opponent = False
-
-                                    if len(cm_room.players) == 0:
-                                        del rooms[cm_room.room_id]
-
+                        cm_room = rooms.get(cm["room"])
+                        if not cm_room:
                             mm_queue.append({"sock": sock, "addr": addr})
-                            sock.sendall(json.dumps({
-                                "type":"info",
-                                "message":"Đã đặt lại ván • Đang chờ ghép cặp"
-                            }).encode("utf-8"))
+                            _try_match_locked()
+                            continue
+
+                        with cm_room.lock:
+                            player = cm["player"]
+                            if player in cm_room.players:
+                                cm_room.players.remove(player)
+                                conn_map.pop(sock, None)
+
+                            if len(cm_room.players) == 1:
+                                mm_queue.append({"sock": sock, "addr": addr})
+                                other = cm_room.players[0]
+                                cm_room.send_one(other, {
+                                    "type": "info",
+                                    "message": "Đối thủ đã đặt lại ván. Bạn đang chờ ghép trận mới."
+                                })
+                                cm_room.waiting_opponent = False
+                                cm_room.push_state()
+                            elif len(cm_room.players) == 0:
+                                rematch_queue.append({"sock": sock, "addr": addr})
 
                         _try_match_locked()
 
