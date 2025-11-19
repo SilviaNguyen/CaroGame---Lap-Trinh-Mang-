@@ -125,108 +125,70 @@ def _try_match_locked():
     while True:
         matched = False
 
-        for room in list(rooms.values()):
-            with room.lock:
-                while room.waiting_opponent and mm_queue:
-                    next_player = mm_queue.pop(0)
-                    sock, addr = next_player["sock"], next_player["addr"]
-
-                    if sock in conn_map:
-                        old_info = conn_map[sock]
-                        old_room = rooms.get(old_info["room"])
-                        if old_room:
-                            with old_room.lock:
-                                if old_info["player"] in old_room.players:
-                                    old_room.players.remove(old_info["player"])
-                                    old_room.waiting_opponent = len(old_room.players) > 0
-                                    old_room.push_state()
-                                if not old_room.players:
-                                    del rooms[old_room.room_id]
-                        del conn_map[sock]
-
-                    room.join(sock, addr)
-                    room.waiting_opponent = len(room.players) < 2
-                    room.push_state()
-                    matched = True
-
         i = 0
         while i < len(rematch_queue):
-            rematch_player = rematch_queue[i]
-            if mm_queue:
-                queue_player = mm_queue.pop(0)
-                new_room_id = _gen_room_id()
-                new_room = RoomState(new_room_id)
-                rooms[new_room_id] = new_room
-                new_room.join(rematch_player["sock"], rematch_player["addr"], "X")
-                new_room.join(queue_player["sock"], queue_player["addr"], "O")
-                new_room.push_state()
-                try:
-                    for sock, pname in ((rematch_player["sock"], "X"), (queue_player["sock"], "O")):
-                        sock.sendall(json.dumps({
-                            "type":"info",
-                            "message":f"Đã ghép cặp • Phòng: {new_room_id}"
-                        }).encode("utf-8"))
-                except: pass
-                rematch_queue.pop(i)
-                matched = True
-            else:
+            if not mm_queue:
                 i += 1
+                continue
 
-        i = 0
-        while i < len(rematch_queue) - 1:
-            p1 = rematch_queue[i]
-            p2 = rematch_queue[i+1]
+            rematch_player = rematch_queue.pop(i)
+            queue_player = mm_queue.pop(0)
 
-            new_room_id = _gen_room_id()
-            new_room = RoomState(new_room_id)
-            rooms[new_room_id] = new_room
-            new_room.join(p1["sock"], p1["addr"], "X")
-            new_room.join(p2["sock"], p2["addr"], "O")
+            cm = conn_map.get(queue_player["sock"])
+            if cm and cm["room"] in rooms:
+                mm_queue.append(queue_player)
+                i += 1
+                continue
+
+            room_id = _gen_room_id()
+            new_room = RoomState(room_id)
+            rooms[room_id] = new_room
+
+            new_room.join(rematch_player["sock"], rematch_player["addr"], "X")
+            new_room.join(queue_player["sock"], queue_player["addr"], "O")
             new_room.push_state()
-            try:
-                for sock, pname in ((p1["sock"], "X"), (p2["sock"], "O")):
-                    sock.sendall(json.dumps({
-                        "type":"info",
-                        "message":f"Đã ghép cặp • Phòng: {new_room_id}"
-                    }).encode("utf-8"))
-            except: pass
 
-            rematch_queue.pop(i)
-            rematch_queue.pop(i)
+            for sock in (rematch_player["sock"], queue_player["sock"]):
+                try:
+                    sock.sendall(json.dumps({
+                        "type": "info",
+                        "message": f"Đã ghép cặp • Phòng: {room_id}"
+                    }).encode("utf-8"))
+                except: pass
+
             matched = True
 
-        while len(mm_queue) >= 2:
-            a = mm_queue.pop(0)
-            b = mm_queue.pop(0)
+        available = []
+        for p in mm_queue:
+            cm = conn_map.get(p["sock"])
+            if not cm or cm["room"] not in rooms:
+                available.append(p)
+
+        while len(available) >= 2:
+            a = available.pop(0)
+            b = available.pop(0)
+            mm_queue.remove(a)
+            mm_queue.remove(b)
+
             sock1, addr1 = a["sock"], a["addr"]
             sock2, addr2 = b["sock"], b["addr"]
-
-            for sock in (sock1, sock2):
-                if sock in conn_map:
-                    old_info = conn_map[sock]
-                    old_room = rooms.get(old_info["room"])
-                    if old_room:
-                        with old_room.lock:
-                            if old_info["player"] in old_room.players:
-                                old_room.players.remove(old_info["player"])
-                                old_room.waiting_opponent = len(old_room.players) > 0
-                                old_room.push_state()
-                            if not old_room.players:
-                                del rooms[old_room.room_id]
-                    del conn_map[sock]
 
             room_id = _gen_room_id()
             room = RoomState(room_id)
             rooms[room_id] = room
+
             room.join(sock1, addr1, "X")
             room.join(sock2, addr2, "O")
-            try:
-                for sock, pname in ((sock1,"X"), (sock2,"O")):
-                    sock.sendall((json.dumps({
+            room.push_state()
+
+            for sock in (sock1, sock2):
+                try:
+                    sock.sendall(json.dumps({
                         "type":"info",
                         "message":f"Đã ghép cặp • Phòng: {room_id}"
-                    })+"\n").encode("utf-8"))
-            except: pass
+                    }).encode("utf-8"))
+                except: pass
+
             matched = True
 
         if not matched:
